@@ -7,7 +7,7 @@ namespace TravelTrek.Domain.Common
     {
         public static readonly Error None = new(string.Empty, string.Empty, ErrorType.Validation);
 
-        private Error(string code, string description, ErrorType type)
+        public Error(string code, string description, ErrorType type)
         {
             Code = code;
             Description = description;

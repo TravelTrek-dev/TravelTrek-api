@@ -108,6 +108,49 @@ public class TripPlanService : ITripPlanService
         return Result.Success(tripPlan.Id);
     }
 
+    public async Task<Result> DeleteTripPlanAsync(Guid tripId, Guid userId, CancellationToken ct = default)
+    {
+        var trip = await _tripPlanRepository.GetByIdAsync(tripId);
+        if (trip == null)
+        {
+            return Result.Failure(Error.NotFound("TripPlan.NotFound", "The trip could not be found."));
+        }
+
+        if (trip.UserId != userId)
+        {
+            return Result.Failure(Error.Forbidden("TripPlan.Forbidden", "You do not have permission to delete this trip."));
+        }
+
+        _tripPlanRepository.Delete(trip);
+        await _unitOfWork.SaveChangesAsync();
+
+        return Result.Success();
+    }
+
+    public async Task<Result<TripPlanResponse>> GetTripPlanAsync(Guid id, Guid userId)
+    {
+        var tripPlan = await _tripPlanRepository.GetTripPlanWithDetailsAsync(id);
+        if (tripPlan != null)
+        {
+            if (tripPlan.UserId != userId)
+            {
+                return Result.Failure<TripPlanResponse>(Error.Forbidden("GetTripPlan.Forbidden", "Forbidden Request"));
+            }
+
+            var tripPlanDto = _mapper.Map<TripPlanResponse>(tripPlan);
+            return Result.Success(tripPlanDto);
+        }
+
+        return Result.Failure<TripPlanResponse>(Error.NotFound("GetTripPlan.NotFound", "Trip Plan Not Found"));
+    }
+
+    public async Task<Result<IEnumerable<TripPlanResponse>>> GetTripPlansAsync(Guid userId)
+    {
+        var tripPlans = await _tripPlanRepository.GetUserTripPlansAsync(userId);
+
+        var tripPlansDto = _mapper.Map<IEnumerable<TripPlanResponse>>(tripPlans);
+        return Result.Success(tripPlansDto);
+    }
     #region Helpers
 
     private async Task<WeatherSummaryDto?> GetWeatherForCityAsync(string city, CancellationToken ct)
