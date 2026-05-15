@@ -1,0 +1,14 @@
+namespace TravelTrek.Domain.Entities.Trip;
+
+public class Activity
+{
+    public Guid Id { get; set; }
+    public Guid DayPlanId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string? GoogleMapsLink { get; set; }
+    public string? Website { get; set; }
+    
+    
+    public DayPlan DayPlan { get; set; } = null!;
+}

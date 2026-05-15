@@ -1,0 +1,18 @@
+namespace TravelTrek.Domain.Entities.Trip;
+
+public class TripPlan
+{
+    public Guid Id { get; set; }
+    public Guid UserId { get; set; } // fk
+    public string City { get; set; } = string.Empty;
+    public string? Country { get; set; }
+    public string? Budget { get; set; }
+    public string? GroupSize { get; set; }
+    public WeatherSummary? Weather { get; set; }    
+    public List<DayPlan> Days { get; set; } = new();
+    
+    public List<string> PackingTips { get; set; } = new();
+    public string? GeneralAdvice { get; set; }
+
+    public User User { get; set; } = null!;
+}

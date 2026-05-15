@@ -23,6 +23,9 @@ namespace TravelTrek.API
 
                 builder.Services.AddApiControllers();
                 builder.Services.AddSwaggerWithAuth();
+                builder.Services.AddAutoMapper(cfg => {
+                    cfg.AddProfile<TravelTrek.Application.Mappings.TripPlanProfile>();
+                });
                 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
                 builder.Services.AddProblemDetails();
                 builder.Services.AddAuthRateLimiting();

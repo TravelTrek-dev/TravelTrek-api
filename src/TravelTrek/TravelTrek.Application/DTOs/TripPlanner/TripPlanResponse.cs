@@ -33,9 +33,7 @@ public class WeatherSummaryDto
 public class DayPlanDto
 {
     public int DayNumber { get; set; }
-    public string Theme { get; set; } = string.Empty;
     public List<ActivityDto> Activities { get; set; } = new();
-    public MealSuggestionsDto? Meals { get; set; }
 }
 
 /// <summary>
@@ -43,21 +41,8 @@ public class DayPlanDto
 /// </summary>
 public class ActivityDto
 {
-    public string Time { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
-    public string Category { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public string? GoogleMapsLink { get; set; }
     public string? Website { get; set; }
-    public int EstimatedDurationMinutes { get; set; }
-}
-
-/// <summary>
-/// Meal suggestions for a day.
-/// </summary>
-public class MealSuggestionsDto
-{
-    public string? Breakfast { get; set; }
-    public string? Lunch { get; set; }
-    public string? Dinner { get; set; }
 }

@@ -1,0 +1,10 @@
+using TravelTrek.Domain.Entities.Trip;
+
+namespace TravelTrek.Domain.Interfaces
+{
+    public interface ITripPlanRepository : IGenericRepository<TripPlan>
+    {
+        Task<TripPlan?> GetTripPlanWithDetailsAsync(Guid tripPlanId);
+        Task<IEnumerable<TripPlan>> GetUserTripPlansAsync(Guid userId);
+    }
+}

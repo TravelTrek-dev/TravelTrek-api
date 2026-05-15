@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using AutoMapper;
 using Microsoft.Extensions.Logging;
 using TravelTrek.Application.DTOs.Ner;
 using TravelTrek.Application.DTOs.Osm;
@@ -7,8 +8,10 @@ using TravelTrek.Application.DTOs.TripPlanner;
 using TravelTrek.Application.DTOs.Weather;
 using TravelTrek.Application.Interfaces;
 using TravelTrek.Domain.Common;
+using TravelTrek.Domain.Entities.Trip;
+using TravelTrek.Domain.Interfaces;
 
-namespace TravelTrek.Infrastructure.Services.TripPlanner;
+namespace TravelTrek.Application.Services;
 
 public class TripPlanService : ITripPlanService
 {
@@ -17,6 +20,10 @@ public class TripPlanService : ITripPlanService
     private readonly IOpenWeatherService _weatherService;
     private readonly ILLMService _illmService;
     private readonly ILogger<TripPlanService> _logger;
+    private readonly ITripPlanRepository _tripPlanRepository;
+    private readonly IUnitOfWork _unitOfWork;
+    private readonly IMapper _mapper;
+
 
     private const int MinPoisPerDay = 3;
     private const int DefaultPoiLimit = 30;
@@ -27,13 +34,16 @@ public class TripPlanService : ITripPlanService
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    public TripPlanService(INerService nerService, IOsmService osmService, IOpenWeatherService weatherService, ILLMService illmService, ILogger<TripPlanService> logger)
+    public TripPlanService(INerService nerService, IOsmService osmService, IOpenWeatherService weatherService, ILLMService illmService, ILogger<TripPlanService> logger, ITripPlanRepository tripPlanRepository, IUnitOfWork unitOfWork, IMapper mapper)
     {
         _nerService = nerService;
         _osmService = osmService;
         _weatherService = weatherService;
         _illmService = illmService;
         _logger = logger;
+        _tripPlanRepository = tripPlanRepository;
+        _unitOfWork = unitOfWork;
+        _mapper = mapper;
     }
 
     public async Task<Result<TripPlanResponse>> GenerateTripPlanAsync(TripPlanRequest request, CancellationToken ct = default)
@@ -86,6 +96,16 @@ public class TripPlanService : ITripPlanService
 
         PatchMissingFields(plan, context);
         return Result.Success(plan);
+    }
+
+    public async Task<Result<Guid>> SaveTripPlanAsync(TripPlanResponse planDto, Guid userId, CancellationToken ct = default)
+    {
+        var tripPlan = _mapper.Map<TripPlan>(planDto);
+        tripPlan.UserId = userId;
+        await _tripPlanRepository.AddAsync(tripPlan);
+        await _unitOfWork.SaveChangesAsync();
+
+        return Result.Success(tripPlan.Id);
     }
 
     #region Helpers
@@ -213,23 +233,14 @@ public class TripPlanService : ITripPlanService
           ""days"": [
             {
               ""dayNumber"": number,
-              ""theme"": ""string describing the day's theme"",
               ""activities"": [
                 {
-                  ""time"": ""HH:MM"",
                   ""name"": ""exact POI name from the list above when applicable"",
-                  ""category"": ""string"",
                   ""description"": ""brief description of activity"",
                   ""googleMapsLink"": ""link from above or null"",
-                  ""website"": ""website from above or null"",
-                  ""estimatedDurationMinutes"": number
+                  ""website"": ""website from above or null""
                 }
-              ],
-              ""meals"": {
-                ""breakfast"": ""suggestion"",
-                ""lunch"": ""suggestion"",
-                ""dinner"": ""suggestion""
-              }
+              ]
             }
           ],
           ""packingTips"": [""tip1"", ""tip2""],
@@ -241,9 +252,8 @@ public class TripPlanService : ITripPlanService
         sb.AppendLine("2. NEVER repeat the same place or activity across different days. Each POI should appear ONLY ONCE in the entire itinerary.");
         sb.AppendLine("3. Use the EXACT POI names and Google Maps links provided above.");
         sb.AppendLine("4. Consider weather when planning outdoor vs indoor activities.");
-        sb.AppendLine("5. Provide realistic time estimates and logical sequencing.");
-        sb.AppendLine("6. Include local food recommendations for meals.");
-        sb.AppendLine("7. Return ONLY the JSON, no other text.");
+        sb.AppendLine("5. Provide logical sequencing of places based on context.");
+        sb.AppendLine("6. Return ONLY the JSON, no other text.");
 
         return sb.ToString();
     }
@@ -289,8 +299,7 @@ public class TripPlanService : ITripPlanService
         if (string.IsNullOrWhiteSpace(plan.GroupSize)) plan.GroupSize = context.TripData.GroupSizes.FirstOrDefault();
         plan.Weather ??= context.Weather;
     }
-
-    #endregion
+    
     private sealed class TripContext
     {
         public required string UserPrompt { get; init; }
@@ -299,4 +308,7 @@ public class TripPlanService : ITripPlanService
         public required List<OsmAttractionDto> Attractions { get; init; }
         public WeatherSummaryDto? Weather { get; init; }
     }
+
+    #endregion
+
 }

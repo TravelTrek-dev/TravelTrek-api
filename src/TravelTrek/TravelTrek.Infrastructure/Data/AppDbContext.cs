@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using TravelTrek.Domain.Entities;
+using TravelTrek.Domain.Entities.Trip;
 
 namespace TravelTrek.Infrastructure.Data
 {
@@ -12,6 +13,9 @@ namespace TravelTrek.Infrastructure.Data
         }
 
         public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+        public DbSet<TripPlan> TripPlans => Set<TripPlan>();
+        public DbSet<DayPlan> DayPlans => Set<DayPlan>();
+        public DbSet<Activity> Activities => Set<Activity>();
 
         public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
         {

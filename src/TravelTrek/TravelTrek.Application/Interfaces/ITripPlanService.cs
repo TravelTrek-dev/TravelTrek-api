@@ -13,4 +13,5 @@ public interface ITripPlanService
     /// 4. LLM-based itinerary generation via Ollama
     /// </summary>
     Task<Result<TripPlanResponse>> GenerateTripPlanAsync(TripPlanRequest request, CancellationToken ct = default);
+    Task<Result<Guid>> SaveTripPlanAsync(TripPlanResponse planDto, Guid userId, CancellationToken ct = default);
 }
