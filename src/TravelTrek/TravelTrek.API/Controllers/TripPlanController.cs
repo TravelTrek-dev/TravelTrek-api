@@ -32,7 +32,7 @@ namespace TravelTrek.API.Controllers
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("SaveTripPlan.Unauthorized", "Unauthorized Request")));
 
             var result = await _tripPlanService.SaveCreatedTripPlanAsync(request, userId, ct);
-            return ToActionResult(result);
+            return ToCreatedResult(result);
         }
 
         [Authorize]
@@ -81,7 +81,7 @@ namespace TravelTrek.API.Controllers
 
         [Authorize]
         [HttpPost("refine/{id}")]
-        public async Task<IActionResult> RefinePlan(Guid id, RefinePlanRequest request, CancellationToken ct)
+        public async Task<IActionResult> RefinePlan(Guid id, [FromBody]RefinePlanRequest request, CancellationToken ct)
         {
             var userId = GetUserId();
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("RefinePlan.Unauthorized", "Unauthorized Request")));
@@ -98,7 +98,7 @@ namespace TravelTrek.API.Controllers
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("SaveRefinePlan.Unauthorized", "Unauthorized Request")));
 
             var result = await _tripPlanService.SaveRefinedTripPlanAsync(id, request, userId, ct);
-            return ToActionResult(result);
+            return ToCreatedResult(result);
         }
     }
 }

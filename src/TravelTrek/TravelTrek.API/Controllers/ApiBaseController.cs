@@ -40,6 +40,14 @@ namespace TravelTrek.API.Controllers
             });
         }
 
+        protected IActionResult ToCreatedResult<T>(Result<T> result)
+        {
+            if (result.IsSuccess)
+                return StatusCode(StatusCodes.Status201Created, result);
+
+            return ToActionResult(result);
+        }
+
         protected IActionResult ToActionResult(Result result)
         {
             if (result.IsSuccess)
