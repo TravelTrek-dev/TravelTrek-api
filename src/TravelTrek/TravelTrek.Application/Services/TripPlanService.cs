@@ -108,6 +108,45 @@ public class TripPlanService : ITripPlanService
         return Result.Success(tripPlan.Id);
     }
 
+    public async Task<Result> UpdateTripPlanAsync(Guid tripId, TripPlanResponse updatedPlanDto, Guid userId, CancellationToken ct = default)
+    {
+        var existingTrip = await _tripPlanRepository.GetTripPlanWithDetailsAsync(tripId);
+        if (existingTrip == null)
+            return Result.Failure(Error.NotFound("TripPlan.NotFound", "The trip could not be found."));
+
+        if (existingTrip.UserId != userId)
+            return Result.Failure(Error.Forbidden("TripPlan.Forbidden", "You do not have permission to edit this trip."));
+
+        // 1. Update primitive properties
+        existingTrip.City = updatedPlanDto.City;
+        existingTrip.Country = updatedPlanDto.Country;
+        existingTrip.Budget = updatedPlanDto.Budget;
+        existingTrip.GroupSize = updatedPlanDto.GroupSize;
+        existingTrip.GeneralAdvice = updatedPlanDto.GeneralAdvice;
+        
+        if (updatedPlanDto.Weather != null)
+            existingTrip.Weather = _mapper.Map<WeatherSummary>(updatedPlanDto.Weather);
+
+        if (updatedPlanDto.PackingTips != null)
+            existingTrip.PackingTips = updatedPlanDto.PackingTips.ToList();
+
+        // 2. Full Replacement of Days & Activities
+        // Clear the old ones (EF Core will cascade delete the old records)
+        existingTrip.Days.Clear();
+
+        // Map the new ones (AutoMapper ignores IDs, so these will be inserted as new rows)
+        var newDays = _mapper.Map<List<DayPlan>>(updatedPlanDto.Days);
+        foreach (var day in newDays)
+        {
+            existingTrip.Days.Add(day);
+        }
+
+        _tripPlanRepository.Update(existingTrip);
+        await _unitOfWork.SaveChangesAsync();
+
+        return Result.Success();
+    }
+
     public async Task<Result> DeleteTripPlanAsync(Guid tripId, Guid userId, CancellationToken ct = default)
     {
         var trip = await _tripPlanRepository.GetByIdAsync(tripId);

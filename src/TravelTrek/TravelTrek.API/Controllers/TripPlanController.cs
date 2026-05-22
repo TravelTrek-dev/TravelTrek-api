@@ -39,6 +39,17 @@ namespace TravelTrek.API.Controllers
         }
 
         [Authorize]
+        [HttpPut("{id}")]
+        public async Task<IActionResult> UpdateTripPlan(Guid id, [FromBody] TripPlanResponse updatedPlanDto, CancellationToken ct)
+        {
+            var userId = GetUserId();
+            if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("UpdateTripPlan.Unauthorized", "Unauthorized Request")));
+
+            var result = await _tripPlanService.UpdateTripPlanAsync(id, updatedPlanDto, userId, ct);
+            return ToActionResult(result);
+        }
+
+        [Authorize]
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteTripPlan(Guid id, CancellationToken ct)
         {
