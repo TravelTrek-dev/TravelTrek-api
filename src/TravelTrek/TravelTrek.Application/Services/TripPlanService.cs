@@ -101,16 +101,14 @@ public class TripPlanService : ITripPlanService
     public async Task<Result<TripPlanResponse>> RefinePlanAsync(RefinePlanRequest request, Guid planId, Guid userId, CancellationToken ct = default)
     {
         var existingTripPlan = await _tripPlanRepository.GetTripPlanWithDetailsAsync(planId);
-        if (existingTripPlan != null)
-        {
-            if (existingTripPlan.UserId != userId)
-            {
-                return Result.Failure<TripPlanResponse>(Error.Forbidden("RefinePlan.Forbidden", "Forbidden Request"));
-            }
-        }
-        else
+        if (existingTripPlan == null)
         {
             return Result.Failure<TripPlanResponse>(Error.NotFound("RefinePlan.NotFound", "Trip Plan Not Found"));
+        }
+            
+        if (existingTripPlan.UserId != userId)
+        {
+            return Result.Failure<TripPlanResponse>(Error.Forbidden("RefinePlan.Forbidden", "Forbidden Request"));
         }
         var tripPlanDto = _mapper.Map<TripPlanResponse>(existingTripPlan);
         
@@ -200,21 +198,19 @@ public class TripPlanService : ITripPlanService
     public async Task<Result<TripPlanResponse>> GetTripPlanAsync(Guid id, Guid userId)
     {
         var tripPlan = await _tripPlanRepository.GetTripPlanWithDetailsAsync(id);
-        if (tripPlan != null)
+        if (tripPlan == null)
         {
-            if (tripPlan.UserId != userId)
-            {
-                return Result.Failure<TripPlanResponse>(Error.Forbidden("GetTripPlan.Forbidden", "Forbidden Request"));
-            }
-
-            var tripPlanDto = _mapper.Map<TripPlanResponse>(tripPlan);
-            return Result.Success(tripPlanDto);
+            return Result.Failure<TripPlanResponse>(Error.NotFound("GetTripPlan.NotFound", "Trip Plan Not Found"));
         }
 
-        return Result.Failure<TripPlanResponse>(Error.NotFound("GetTripPlan.NotFound", "Trip Plan Not Found"));
+        if (tripPlan.UserId != userId)
+        {
+            return Result.Failure<TripPlanResponse>(Error.Forbidden("GetTripPlan.Forbidden", "Forbidden Request"));
+        }
+
+        var tripPlanDto = _mapper.Map<TripPlanResponse>(tripPlan);
+        return Result.Success(tripPlanDto);
     }
-
-
 
     public async Task<Result<IEnumerable<TripPlanResponse>>> GetTripPlansAsync(Guid userId)
     {
