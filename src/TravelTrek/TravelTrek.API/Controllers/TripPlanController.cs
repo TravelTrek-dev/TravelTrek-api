@@ -1,11 +1,8 @@
-using AutoMapper;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelTrek.Application.DTOs.TripPlanner;
 using TravelTrek.Application.Interfaces;
 using TravelTrek.Domain.Common;
-using TravelTrek.Domain.Entities.Trip;
-using TravelTrek.Domain.Interfaces;
 
 namespace TravelTrek.API.Controllers
 {
@@ -28,24 +25,24 @@ namespace TravelTrek.API.Controllers
         }
 
         [Authorize]
-        [HttpPost("save")]
-        public async Task<IActionResult> SaveTripPlan([FromBody] TripPlanResponse planDto, CancellationToken ct)
+        [HttpPost("save-created")]
+        public async Task<IActionResult> SaveCreatedTripPlan([FromBody] SaveTripPlanRequest request, CancellationToken ct)
         {
             var userId = GetUserId();
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("SaveTripPlan.Unauthorized", "Unauthorized Request")));
 
-            var result = await _tripPlanService.SaveTripPlanAsync(planDto, userId, ct);
+            var result = await _tripPlanService.SaveCreatedTripPlanAsync(request, userId, ct);
             return ToActionResult(result);
         }
 
         [Authorize]
         [HttpPut("{id}")]
-        public async Task<IActionResult> UpdateTripPlan(Guid id, [FromBody] TripPlanResponse updatedPlanDto, CancellationToken ct)
+        public async Task<IActionResult> UpdateTripPlan(Guid id, [FromBody] SaveTripPlanRequest request, CancellationToken ct)
         {
             var userId = GetUserId();
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("UpdateTripPlan.Unauthorized", "Unauthorized Request")));
 
-            var result = await _tripPlanService.UpdateTripPlanAsync(id, updatedPlanDto, userId, ct);
+            var result = await _tripPlanService.UpdateTripPlanAsync(id, request, userId, ct);
             return ToActionResult(result);
         }
 
@@ -79,6 +76,28 @@ namespace TravelTrek.API.Controllers
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("GetTripPlans.Unauthorized", "Unauthorized Request")));
 
             var result = await _tripPlanService.GetTripPlansAsync(userId);
+            return ToActionResult(result);
+        }
+
+        [Authorize]
+        [HttpPost("refine/{id}")]
+        public async Task<IActionResult> RefinePlan(Guid id, RefinePlanRequest request, CancellationToken ct)
+        {
+            var userId = GetUserId();
+            if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("RefinePlan.Unauthorized", "Unauthorized Request")));
+
+            var result = await _tripPlanService.RefinePlanAsync(request, id, userId, ct);
+            return ToActionResult(result);
+        }
+
+        [Authorize]
+        [HttpPost("save-refined/{id}")]
+        public async Task<IActionResult> SaveRefinedTripPlan(Guid id, [FromBody] SaveTripPlanRequest request, CancellationToken ct)
+        {
+            var userId = GetUserId();
+            if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("SaveRefinePlan.Unauthorized", "Unauthorized Request")));
+
+            var result = await _tripPlanService.SaveRefinedTripPlanAsync(id, request, userId, ct);
             return ToActionResult(result);
         }
     }

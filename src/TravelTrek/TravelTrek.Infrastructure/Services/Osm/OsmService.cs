@@ -70,7 +70,7 @@ public class OsmService : IOsmService
             }
 
             var overpassDataStr = await overpassResponse.Content.ReadAsStringAsync(ct);
-            var attractions = ParseOverpassResponse(overpassDataStr, limit);
+            var attractions = ParseOverpassResponse(overpassDataStr, limit, cityName);
             return Result.Success(attractions);
         }
         catch (Exception ex)
@@ -81,7 +81,7 @@ public class OsmService : IOsmService
         }
     }
 
-    private List<OsmAttractionDto> ParseOverpassResponse(string json, int limit)
+    private List<OsmAttractionDto> ParseOverpassResponse(string json, int limit, string cityName)
     {
         var attractions = new List<OsmAttractionDto>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

@@ -83,7 +83,7 @@ public class TripPlanService : ITripPlanService
             Weather = await weatherTask
         };
 
-        var llmResult = await _illmService.GenerateAsync(BuildLlmPrompt(context), ct);
+        var llmResult = await _illmService.GenerateAsync(BuildGeneratePlanLlmPrompt(context), ct);
         if (llmResult.IsFailure)
         {
             _logger.LogWarning("LLM generation failed: {Error}", llmResult.Error);
@@ -97,8 +97,62 @@ public class TripPlanService : ITripPlanService
         PatchMissingFields(plan, context);
         return Result.Success(plan);
     }
+    
+    public async Task<Result<TripPlanResponse>> RefinePlanAsync(RefinePlanRequest request, Guid planId, Guid userId, CancellationToken ct = default)
+    {
+        var existingTripPlan = await _tripPlanRepository.GetTripPlanWithDetailsAsync(planId);
+        if (existingTripPlan != null)
+        {
+            if (existingTripPlan.UserId != userId)
+            {
+                return Result.Failure<TripPlanResponse>(Error.Forbidden("RefinePlan.Forbidden", "Forbidden Request"));
+            }
+        }
+        else
+        {
+            return Result.Failure<TripPlanResponse>(Error.NotFound("RefinePlan.NotFound", "Trip Plan Not Found"));
+        }
+        var tripPlanDto = _mapper.Map<TripPlanResponse>(existingTripPlan);
+        
+        var tripPlanJson = JsonSerializer.Serialize(tripPlanDto);
 
-    public async Task<Result<Guid>> SaveTripPlanAsync(TripPlanResponse planDto, Guid userId, CancellationToken ct = default)
+        var llmResult = await _illmService.GenerateAsync(BuildRefinePlanLlmPrompt(tripPlanJson, request.UserPrompt), ct);
+        
+        if (llmResult.IsFailure)
+        {
+            return Result.Failure<TripPlanResponse>(llmResult.Error);
+        }
+
+        var plan = TryParseLlmResponse(llmResult.Value);
+        if (plan == null)
+        {
+            return Result.Failure<TripPlanResponse>(Error.External("RefinePlan.ParseFailed", "Failed to parse the generated itinerary. Please try again."));
+        }
+        return Result.Success(plan);
+    }
+    
+    public async Task<Result<Guid>> SaveRefinedTripPlanAsync(Guid tripId, SaveTripPlanRequest updatedPlanDto, Guid userId, CancellationToken ct = default)
+    {
+        var existingTrip = await _tripPlanRepository.GetTripPlanWithDetailsAsync(tripId);
+        if (existingTrip == null)
+        {
+            return Result.Failure<Guid>(Error.NotFound("SaveRefinedPlan.NotFound", "The trip could not be found."));
+        }
+
+        if (existingTrip.UserId != userId)
+        {
+            return Result.Failure<Guid>(Error.Forbidden("SaveRefinedPlan.Forbidden", "You do not have permission to edit this trip."));
+        }
+
+        _mapper.Map(updatedPlanDto, existingTrip);
+        
+        _tripPlanRepository.Update(existingTrip);
+        await _unitOfWork.SaveChangesAsync();
+
+        return Result.Success(existingTrip.Id);
+    }
+
+    public async Task<Result<Guid>> SaveCreatedTripPlanAsync(SaveTripPlanRequest planDto, Guid userId, CancellationToken ct = default)
     {
         var tripPlan = _mapper.Map<TripPlan>(planDto);
         tripPlan.UserId = userId;
@@ -107,8 +161,7 @@ public class TripPlanService : ITripPlanService
 
         return Result.Success(tripPlan.Id);
     }
-
-    public async Task<Result> UpdateTripPlanAsync(Guid tripId, TripPlanResponse updatedPlanDto, Guid userId, CancellationToken ct = default)
+    public async Task<Result> UpdateTripPlanAsync(Guid tripId, SaveTripPlanRequest updatedPlanDto, Guid userId, CancellationToken ct = default)
     {
         var existingTrip = await _tripPlanRepository.GetTripPlanWithDetailsAsync(tripId);
         if (existingTrip == null)
@@ -117,29 +170,7 @@ public class TripPlanService : ITripPlanService
         if (existingTrip.UserId != userId)
             return Result.Failure(Error.Forbidden("TripPlan.Forbidden", "You do not have permission to edit this trip."));
 
-        // 1. Update primitive properties
-        existingTrip.City = updatedPlanDto.City;
-        existingTrip.Country = updatedPlanDto.Country;
-        existingTrip.Budget = updatedPlanDto.Budget;
-        existingTrip.GroupSize = updatedPlanDto.GroupSize;
-        existingTrip.GeneralAdvice = updatedPlanDto.GeneralAdvice;
-        
-        if (updatedPlanDto.Weather != null)
-            existingTrip.Weather = _mapper.Map<WeatherSummary>(updatedPlanDto.Weather);
-
-        if (updatedPlanDto.PackingTips != null)
-            existingTrip.PackingTips = updatedPlanDto.PackingTips.ToList();
-
-        // 2. Full Replacement of Days & Activities
-        // Clear the old ones (EF Core will cascade delete the old records)
-        existingTrip.Days.Clear();
-
-        // Map the new ones (AutoMapper ignores IDs, so these will be inserted as new rows)
-        var newDays = _mapper.Map<List<DayPlan>>(updatedPlanDto.Days);
-        foreach (var day in newDays)
-        {
-            existingTrip.Days.Add(day);
-        }
+        _mapper.Map(updatedPlanDto, existingTrip);
 
         _tripPlanRepository.Update(existingTrip);
         await _unitOfWork.SaveChangesAsync();
@@ -182,6 +213,8 @@ public class TripPlanService : ITripPlanService
 
         return Result.Failure<TripPlanResponse>(Error.NotFound("GetTripPlan.NotFound", "Trip Plan Not Found"));
     }
+
+
 
     public async Task<Result<IEnumerable<TripPlanResponse>>> GetTripPlansAsync(Guid userId)
     {
@@ -246,7 +279,32 @@ public class TripPlanService : ITripPlanService
         };
     }
 
-    private static string BuildLlmPrompt(TripContext context)
+    private static string BuildRefinePlanLlmPrompt(string tripPlan, string userPrompt)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("You are an expert travel editor. I will provide you with a current JSON travel itinerary and a specific user instruction on how to change it.");
+        sb.AppendLine();
+        
+        sb.AppendLine("=== current JSON travel itinerary ===");
+        sb.AppendLine(tripPlan);
+        sb.AppendLine();
+        
+        sb.AppendLine("=== user instruction ===");
+        sb.AppendLine(userPrompt);
+        sb.AppendLine();
+        
+        sb.AppendLine("=== OUTPUT FORMAT ===");
+        sb.AppendLine("Return ONLY valid JSON (no markdown, no explanation) matching the exact schema of the current JSON travel itinerary.");
+        sb.AppendLine();
+        sb.AppendLine("IMPORTANT RULES:");
+        sb.AppendLine("1. Keep the JSON structure exactly the same.");
+        sb.AppendLine("2. If you add a new activity that was not in the original plan, generate a Google Maps search link using this exact format: https://www.google.com/maps/search/?api=1&query=Activity+Name,+City+Name (replace spaces with +). If you don't know the website, set website to null.");
+        sb.AppendLine("3. Only apply the user's specific instruction, keeping the rest of the plan intact.");
+
+        return sb.ToString();
+    }
+
+    private static string BuildGeneratePlanLlmPrompt(TripContext context)
     {
         var sb = new StringBuilder();
 
@@ -319,8 +377,8 @@ public class TripPlanService : ITripPlanService
                 {
                   ""name"": ""exact POI name from the list above when applicable"",
                   ""description"": ""brief description of activity"",
-                  ""googleMapsLink"": ""link from above or null"",
-                  ""website"": ""website from above or null""
+                  ""googleMapsLink"": ""exact Google Maps link from the list above. If not in the list, generate link format: https://www.google.com/maps/search/?api=1&query=Activity+Name,+City+Name (replace spaces with +)"",
+                  ""website"": ""exact website from the list above. If not in the list or no website is provided, set to null""
                 }
               ]
             }
@@ -332,10 +390,12 @@ public class TripPlanService : ITripPlanService
         sb.AppendLine("IMPORTANT RULES:");
         sb.AppendLine($"1. Each day MUST have at least {MinPoisPerDay} activities/POIs.");
         sb.AppendLine("2. NEVER repeat the same place or activity across different days. Each POI should appear ONLY ONCE in the entire itinerary.");
-        sb.AppendLine("3. Use the EXACT POI names and Google Maps links provided above.");
-        sb.AppendLine("4. Consider weather when planning outdoor vs indoor activities.");
-        sb.AppendLine("5. Provide logical sequencing of places based on context.");
-        sb.AppendLine("6. Return ONLY the JSON, no other text.");
+        sb.AppendLine("3. Use the EXACT POI names, Google Maps links, and websites provided above.");
+        sb.AppendLine("4. For activities in the provided POI list, use the exact Google Maps link provided (which contains coordinates). For activities NOT in the provided POI list, you MUST generate a Google Maps search link by name in this exact format: https://www.google.com/maps/search/?api=1&query=Activity+Name,+City+Name (replace spaces with +). NEVER guess website URLs, set website to null if unknown.");
+        sb.AppendLine("5. Consider weather when planning outdoor vs indoor activities.");
+        sb.AppendLine("6. Provide logical sequencing of places based on context.");
+        sb.AppendLine("7. if budget (in dollars), duration or group size are null, fill them with what you find suitable for the destination");
+        sb.AppendLine("8. Return ONLY the JSON, no other text.");
 
         return sb.ToString();
     }
