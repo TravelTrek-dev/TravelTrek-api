@@ -164,6 +164,7 @@ public class OsmService : IOsmService
             attractions.Add(new OsmAttractionDto
             {
                 Name = name,
+                City = cityName,
                 Category = category,
                 Score = score,
                 GoogleMapsLink = googleMapsLink,

@@ -3,6 +3,7 @@ namespace TravelTrek.Application.DTOs.Osm;
 public class OsmAttractionDto
 {
     public string Name { get; set; } = string.Empty;
+    public string City { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;
     public int Score { get; set; }
     public string GoogleMapsLink { get; set; } = string.Empty;

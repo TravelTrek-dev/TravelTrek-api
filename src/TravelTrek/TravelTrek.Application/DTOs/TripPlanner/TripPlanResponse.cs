@@ -46,4 +46,5 @@ public class ActivityDto
     public string Description { get; set; } = string.Empty;
     public string? GoogleMapsLink { get; set; }
     public string? Website { get; set; }
+    public string? City { get; set; }
 }

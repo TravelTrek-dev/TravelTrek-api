@@ -56,31 +56,44 @@ public class TripPlanService : ITripPlanService
         }
 
         var tripData = nerResult.Value;
-        var city = tripData.Locations.FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(city))
+        var cities = tripData.Locations;
+        if (cities.Count == 0)
         {
             return Result.Failure<TripPlanResponse>(Error.Validation("TripPlan.NoCity", "Could not extract a destination city from your prompt. Please include a city name."));
         }
 
-        _logger.LogInformation("NER extracted — City: {City}, Duration: {Duration}, Budget: {Budget}, GroupSize: {GroupSize}",
-            city, tripData.Durations.FirstOrDefault() ?? "N/A", tripData.Budgets.FirstOrDefault() ?? "N/A", tripData.GroupSizes.FirstOrDefault() ?? "N/A");
-
-        var osmTask = _osmService.GetTopAttractionsAsync(city, DefaultPoiLimit, ct);
-        var weatherTask = GetWeatherForCityAsync(city, ct);
-        await Task.WhenAll(osmTask, weatherTask);
-
-        var osmResult = await osmTask;
-        var attractions = osmResult.IsSuccess ? osmResult.Value : [];
-        if (osmResult.IsFailure)
-            _logger.LogWarning("OSM POI fetch failed: {Error}. Proceeding without POIs.", osmResult.Error);
+        _logger.LogInformation("NER extracted — City: {cities}, Duration: {Duration}, Budget: {Budget}, GroupSize: {GroupSize}",
+            cities, tripData.Durations.FirstOrDefault() ?? "N/A", tripData.Budgets.FirstOrDefault() ?? "N/A", tripData.GroupSizes.FirstOrDefault() ?? "N/A");
+        
+        
+        
+        var osmTask = tripData.Locations.Select(city => _osmService.GetTopAttractionsAsync(city, DefaultPoiLimit, ct));
+        var weatherTask = tripData.Locations.Select(city => GetWeatherForCityAsync(city, ct));
+        
+        var attractionsResults = await Task.WhenAll(osmTask);
+        var weatherResults = await Task.WhenAll(weatherTask);
+        
+        for (int i = 0; i < attractionsResults.Length; i++)
+        {
+            var city = cities[i];
+            if (attractionsResults[i].IsSuccess)
+            {
+                _logger.LogInformation("Found {Count} POIs for city '{City}'", attractionsResults[i].Value.Count, city);
+            }
+            else
+            {
+                _logger.LogWarning("Failed to fetch POIs for city '{City}': {Error}", city, attractionsResults[i].Error);
+            }
+        }
+        
 
         var context = new TripContext
         {
             UserPrompt = request.Prompt,
-            City = city,
+            Cities = cities,
             TripData = tripData,
-            Attractions = attractions,
-            Weather = await weatherTask
+            Attractions = attractionsResults.Where(result => result.IsSuccess).SelectMany(result => result.Value).ToList(),
+            Weather = weatherResults.ToList()
         };
 
         var llmResult = await _illmService.GenerateAsync(BuildGeneratePlanLlmPrompt(context), ct);
@@ -312,9 +325,9 @@ public class TripPlanService : ITripPlanService
         sb.AppendLine();
 
         sb.AppendLine("=== EXTRACTED TRIP DETAILS ===");
-        sb.AppendLine($"- Destination: {context.City}");
-        if (!string.IsNullOrWhiteSpace(context.TripData.Durations.FirstOrDefault()))
-            sb.AppendLine($"- Duration: {context.TripData.Durations[0]}");
+        sb.AppendLine($"- Destination: {string.Join(", ", context.Cities)}");
+        if (context.TripData.Durations.Count != 0)
+            sb.AppendLine($"- Duration: {string.Join(", ", context.TripData.Durations)}");
         if (!string.IsNullOrWhiteSpace(context.TripData.Budgets.FirstOrDefault()))
             sb.AppendLine($"- Budget: {context.TripData.Budgets[0]}");
         if (!string.IsNullOrWhiteSpace(context.TripData.GroupSizes.FirstOrDefault()))
@@ -324,13 +337,17 @@ public class TripPlanService : ITripPlanService
         if (context.TripData.Dates.Count > 0) sb.AppendLine($"- Travel dates: {string.Join(", ", context.TripData.Dates)}");
         sb.AppendLine();
 
-        if (context.Weather != null)
+        if (context.Weather?.Count > 0)
         {
             sb.AppendLine("=== WEATHER FORECAST ===");
-            sb.AppendLine($"- Average temperature: {context.Weather.AvgTempCelsius}°C");
-            sb.AppendLine($"- Condition: {context.Weather.Condition}");
-            sb.AppendLine($"- Humidity: {context.Weather.AvgHumidity}%");
-            sb.AppendLine($"- Wind speed: {context.Weather.AvgWindSpeed} m/s");
+            for (int i = 0; i < Math.Min(context.Cities.Count, context.Weather.Count); i++)
+            {
+                var w = context.Weather[i];
+                if (w != null)
+                {
+                    sb.AppendLine($"- {context.Cities[i]}: {w.AvgTempCelsius}°C, {w.Condition}, Humidity: {w.AvgHumidity}%, Wind: {w.AvgWindSpeed} m/s");
+                }
+            }
             sb.AppendLine("Use the weather information to suggest appropriate activities and packing tips.");
             sb.AppendLine();
         }
@@ -344,7 +361,7 @@ public class TripPlanService : ITripPlanService
             for (var i = 0; i < context.Attractions.Count; i++)
             {
                 var a = context.Attractions[i];
-                sb.AppendLine($"{i + 1}. {a.Name} (Category: {a.Category})");
+                sb.AppendLine($"{i + 1}. {a.Name} (City: {a.City}, Category: {a.Category})");
                 sb.AppendLine($"   Google Maps: {a.GoogleMapsLink}");
                 if (!string.IsNullOrWhiteSpace(a.Website))
                     sb.AppendLine($"   Website: {a.Website}");
@@ -372,6 +389,7 @@ public class TripPlanService : ITripPlanService
               ""activities"": [
                 {
                   ""name"": ""exact POI name from the list above when applicable"",
+                  ""city"": ""the city this activity is located in"",
                   ""description"": ""brief description of activity"",
                   ""googleMapsLink"": ""exact Google Maps link from the list above. If not in the list, generate link format: https://www.google.com/maps/search/?api=1&query=Activity+Name,+City+Name (replace spaces with +)"",
                   ""website"": ""exact website from the list above. If not in the list or no website is provided, set to null""
@@ -392,6 +410,7 @@ public class TripPlanService : ITripPlanService
         sb.AppendLine("6. Provide logical sequencing of places based on context.");
         sb.AppendLine("7. if budget (in dollars), duration or group size are null, fill them with what you find suitable for the destination");
         sb.AppendLine("8. Return ONLY the JSON, no other text.");
+        sb.AppendLine("9. You MUST include activities from ALL the extracted destination cities. Divide the number of days equally among the cities if possible (e.g., for a 4-day trip to 2 cities, assign the first 2 days to the first city, and the next 2 days to the second city). Group days by city sequentially so the traveler does not jump back and forth between cities.");
 
         return sb.ToString();
     }
@@ -431,20 +450,24 @@ public class TripPlanService : ITripPlanService
 
     private static void PatchMissingFields(TripPlanResponse plan, TripContext context)
     {
-        if (string.IsNullOrWhiteSpace(plan.City)) plan.City = context.City;
+        if (string.IsNullOrWhiteSpace(plan.City)) plan.City = string.Join(", ", context.Cities);
         if (string.IsNullOrWhiteSpace(plan.Duration)) plan.Duration = context.TripData.Durations.FirstOrDefault();
         if (string.IsNullOrWhiteSpace(plan.Budget)) plan.Budget = context.TripData.Budgets.FirstOrDefault();
         if (string.IsNullOrWhiteSpace(plan.GroupSize)) plan.GroupSize = context.TripData.GroupSizes.FirstOrDefault();
-        plan.Weather ??= context.Weather;
+        
+        if (context.Weather != null)
+        {
+            plan.Weather ??= context.Weather.FirstOrDefault(w => w != null);
+        }
     }
     
     private sealed class TripContext
     {
         public required string UserPrompt { get; init; }
-        public required string City { get; init; }
+        public required List<string> Cities { get; init; }
         public required ExtractedTripData TripData { get; init; }
         public required List<OsmAttractionDto> Attractions { get; init; }
-        public WeatherSummaryDto? Weather { get; init; }
+        public List<WeatherSummaryDto?>? Weather { get; init; }
     }
 
     #endregion

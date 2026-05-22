@@ -8,6 +8,7 @@ public class Activity
     public string Description { get; set; } = string.Empty;
     public string? GoogleMapsLink { get; set; }
     public string? Website { get; set; }
+    public string? City { get; set; }
     
     
     public DayPlan DayPlan { get; set; } = null!;
