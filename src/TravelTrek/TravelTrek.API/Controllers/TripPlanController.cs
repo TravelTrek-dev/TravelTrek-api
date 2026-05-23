@@ -100,5 +100,34 @@ namespace TravelTrek.API.Controllers
             var result = await _tripPlanService.SaveRefinedTripPlanAsync(id, request, userId, ct);
             return ToCreatedResult(result);
         }
+
+        [Authorize]
+        [HttpPost("{id}/share")]
+        public async Task<IActionResult> ShareTripPlan(Guid id, CancellationToken ct)
+        {
+            var userId = GetUserId();
+            if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("ShareTripPlan.Unauthorized", "Unauthorized Request")));
+
+            var result = await _tripPlanService.ShareTripPlanAsync(id, userId, ct);
+            return ToActionResult(result);
+        }
+
+        [HttpGet("shared/{token}")]
+        public async Task<IActionResult> GetSharedTripPlan(string token, CancellationToken ct)
+        {
+            var result = await _tripPlanService.GetSharedTripPlanAsync(token, ct);
+            return ToActionResult(result);
+        }
+
+        [Authorize]
+        [HttpPost("clone/{token}")]
+        public async Task<IActionResult> CloneTripPlan(string token, CancellationToken ct)
+        {
+            var userId = GetUserId();
+            if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("CloneTrip.Unauthorized", "Unauthorized Request")));
+
+            var result = await _tripPlanService.CloneTripPlanAsync(token, userId, ct);
+            return ToCreatedResult(result);
+        }
     }
 }
