@@ -28,7 +28,7 @@ public class TripPlanService : ITripPlanService
 
 
     private const int MinPoisPerDay = 3;
-    private const int DefaultPoiLimit = 30;
+    private const int DefaultPoiLimit = 12;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -51,14 +51,23 @@ public class TripPlanService : ITripPlanService
 
     public async Task<Result<TripPlanResponse>> GenerateTripPlanAsync(TripPlanRequest request, CancellationToken ct = default)
     {
-        var nerResult = await _nerService.ExtractAndParseTripDataAsync(new NerRequest { Inputs = request.Prompt }, ct);
-        if (nerResult.IsFailure)
+        var nerRequest = new NerRequest { Inputs = request.Prompt };
+        var rawEntitiesResult = await _nerService.ExtractEntitiesAsync(nerRequest, ct);
+        if (rawEntitiesResult.IsFailure)
         {
-            _logger.LogWarning("NER extraction failed: {Error}", nerResult.Error);
-            return Result.Failure<TripPlanResponse>(nerResult.Error);
+            _logger.LogWarning("NER extraction failed: {Error}", rawEntitiesResult.Error);
+            return Result.Failure<TripPlanResponse>(rawEntitiesResult.Error);
         }
 
-        var tripData = nerResult.Value;
+        var rawEntities = rawEntitiesResult.Value;
+        var feasibilityResult = await _nerService.CheckFeasibilityAsync(rawEntities, ct);
+        if (feasibilityResult.IsSuccess && !feasibilityResult.Value.IsFeasible)
+        {
+            _logger.LogWarning("Trip plan feasibility check failed: {Explanation}", feasibilityResult.Value.Explanation);
+            return Result.Failure<TripPlanResponse>(Error.Validation("TripPlan.Infeasible", feasibilityResult.Value.Explanation));
+        }
+
+        var tripData = ParseTripData(rawEntities);
         var cities = tripData.Locations;
         if (cities.Count == 0)
         {
@@ -75,19 +84,6 @@ public class TripPlanService : ITripPlanService
         
         var attractionsResults = await Task.WhenAll(osmTask);
         var weatherResults = await Task.WhenAll(weatherTask);
-        
-        for (int i = 0; i < attractionsResults.Length; i++)
-        {
-            var city = cities[i];
-            if (attractionsResults[i].IsSuccess)
-            {
-                _logger.LogInformation("Found {Count} POIs for city '{City}'", attractionsResults[i].Value.Count, city);
-            }
-            else
-            {
-                _logger.LogWarning("Failed to fetch POIs for city '{City}': {Error}", city, attractionsResults[i].Error);
-            }
-        }
         
 
         var context = new TripContext
@@ -515,7 +511,8 @@ public class TripPlanService : ITripPlanService
                   ""city"": ""the city this activity is located in"",
                   ""description"": ""brief description of activity"",
                   ""googleMapsLink"": ""exact Google Maps link from the list above. If not in the list, generate link format: https://www.google.com/maps/search/?api=1&query=Activity+Name,+City+Name (replace spaces with +)"",
-                  ""website"": ""exact website from the list above. If not in the list or no website is provided, set to null""
+                  ""website"": ""exact website from the list above. If not in the list or no website is provided, set to null"",
+                  ""type"": ""'Activity' or 'Transit'""
                 }
               ]
             }
@@ -534,6 +531,7 @@ public class TripPlanService : ITripPlanService
         sb.AppendLine("7. if budget (in dollars), duration or group size are null, fill them with what you find suitable for the destination");
         sb.AppendLine("8. Return ONLY the JSON, no other text.");
         sb.AppendLine("9. You MUST include activities from ALL the extracted destination cities. Divide the number of days equally among the cities if possible (e.g., for a 4-day trip to 2 cities, assign the first 2 days to the first city, and the next 2 days to the second city). Group days by city sequentially so the traveler does not jump back and forth between cities.");
+        sb.AppendLine("10. Multi-City Transit Rule: For multi-city trips, when transitioning between different cities (e.g., Day 2 is Paris and Day 3 is Marseille), you MUST insert a transit block at the end of Day 2 or the start of Day 3. Set its \"type\" property to \"Transit\", \"name\" to something descriptive (e.g., \"Transit: Paris to Marseille by Train\"), \"city\" to the destination city, and \"description\" to practical advice (e.g., \"Board the high-speed TGV train from Gare de Lyon... duration 3 hours\"). Normal sightseeing/POIs MUST have \"type\" set to \"Activity\".");
 
         return sb.ToString();
     }
@@ -582,6 +580,42 @@ public class TripPlanService : ITripPlanService
         {
             plan.Weather ??= context.Weather.FirstOrDefault(w => w != null);
         }
+    }
+
+    private static ExtractedTripData ParseTripData(IEnumerable<NerEntity> entities)
+    {
+        var data = new ExtractedTripData();
+        foreach (var entity in entities)
+        {
+            var word = entity.Word.Trim();
+            if (string.IsNullOrWhiteSpace(word)) continue;
+
+            switch (entity.EntityGroup.ToUpperInvariant())
+            {
+                case "LOCATION":
+                    data.Locations.Add(word);
+                    break;
+                case "DATE":
+                    data.Dates.Add(word);
+                    break;
+                case "DURATION":
+                    data.Durations.Add(word);
+                    break;
+                case "BUDGET":
+                    data.Budgets.Add(word);
+                    break;
+                case "GROUP_SIZE":
+                    data.GroupSizes.Add(word);
+                    break;
+                case "TRAVEL_TYPE":
+                    data.TravelTypes.Add(word);
+                    break;
+                case "ACTIVITY":
+                    data.Activities.Add(word);
+                    break;
+            }
+        }
+        return data;
     }
     
     private sealed class TripContext

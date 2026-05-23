@@ -101,4 +101,41 @@ public class NerService : INerService
 
         return Result.Success(data);
     }
+
+    public async Task<Result<FeasibilityResult>> CheckFeasibilityAsync(IEnumerable<NerEntity> nerOutput, CancellationToken ct = default)
+    {
+        try
+        {
+            var payload = new { ner_output = nerOutput };
+            var response = await _httpClient.PostAsJsonAsync("check-feasibility", payload, ct);
+
+            if ((int)response.StatusCode >= 500)
+            {
+                return Result.Failure<FeasibilityResult>(Error.External("NerApi.ServerError", $"Feasibility API server error: {(int)response.StatusCode}."));
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return Result.Failure<FeasibilityResult>(Error.Internal("NerApi.Error", $"Unexpected feasibility response: {(int)response.StatusCode}."));
+            }
+
+            var value = await response.Content.ReadFromJsonAsync<FeasibilityResult>(cancellationToken: ct);
+            if (value is null)
+            {
+                return Result.Failure<FeasibilityResult>(Error.Internal("NerApi.EmptyResponse", "Empty response from Feasibility API."));
+            }
+
+            return Result.Success(value);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogWarning(ex, "Failed to connect to feasibility service");
+            return Result.Failure<FeasibilityResult>(Error.External("NerApi.ServerError", "Feasibility service is not available at the moment."));
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse Feasibility API response.");
+            return Result.Failure<FeasibilityResult>(Error.Internal("NerApi.ParseError", "Failed to parse Feasibility API response."));
+        }
+    }
 }
