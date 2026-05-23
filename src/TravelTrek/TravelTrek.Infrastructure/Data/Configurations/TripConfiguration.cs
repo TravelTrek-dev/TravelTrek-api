@@ -45,6 +45,8 @@ public class DayPlanConfiguration : IEntityTypeConfiguration<DayPlan>
             .WithOne(a => a.DayPlan)
             .HasForeignKey(a => a.DayPlanId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        builder.OwnsOne(d => d.Meals);
     }
 }
 

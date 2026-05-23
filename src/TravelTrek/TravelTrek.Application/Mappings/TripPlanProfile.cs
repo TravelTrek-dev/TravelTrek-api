@@ -32,12 +32,14 @@ namespace TravelTrek.Application.Mappings
                 .ForMember(dest => dest.DayPlan, opt => opt.Ignore());
 
             CreateMap<WeatherSummaryDto, WeatherSummary>();
+            CreateMap<MealPlanDto, MealPlan>().ReverseMap();
             
             // Map from Entity -> DTO (for reading/retrieving)
             CreateMap<TripPlan, TripPlanResponse>();
             CreateMap<DayPlan, DayPlanDto>();
             CreateMap<Activity, ActivityDto>();
             CreateMap<WeatherSummary, WeatherSummaryDto>();
+            CreateMap<MealPlan, MealPlanDto>();
         }
     }
 }

@@ -512,9 +512,15 @@ public class TripPlanService : ITripPlanService
                   ""description"": ""brief description of activity"",
                   ""googleMapsLink"": ""exact Google Maps link from the list above. If not in the list, generate link format: https://www.google.com/maps/search/?api=1&query=Activity+Name,+City+Name (replace spaces with +)"",
                   ""website"": ""exact website from the list above. If not in the list or no website is provided, set to null"",
+                  ""approximateCost"": ""estimated cost for this activity (e.g. 'Free', '$10', '$150' for upscale dining, etc.)"",
                   ""type"": ""'Activity' or 'Transit'""
                 }
-              ]
+              ],
+              ""meals"": {
+                ""breakfast"": ""suggested breakfast spot/food matching the budget"",
+                ""lunch"": ""suggested lunch spot/food matching the budget"",
+                ""dinner"": ""suggested dinner spot/food matching the budget""
+              }
             }
           ],
           ""packingTips"": [""tip1"", ""tip2""],
@@ -532,6 +538,7 @@ public class TripPlanService : ITripPlanService
         sb.AppendLine("8. Return ONLY the JSON, no other text.");
         sb.AppendLine("9. You MUST include activities from ALL the extracted destination cities. Divide the number of days equally among the cities if possible (e.g., for a 4-day trip to 2 cities, assign the first 2 days to the first city, and the next 2 days to the second city). Group days by city sequentially so the traveler does not jump back and forth between cities.");
         sb.AppendLine("10. Multi-City Transit Rule: For multi-city trips, when transitioning between different cities (e.g., Day 2 is Paris and Day 3 is Marseille), you MUST insert a transit block at the end of Day 2 or the start of Day 3. Set its \"type\" property to \"Transit\", \"name\" to something descriptive (e.g., \"Transit: Paris to Marseille by Train\"), \"city\" to the destination city, and \"description\" to practical advice (e.g., \"Board the high-speed TGV train from Gare de Lyon... duration 3 hours\"). Normal sightseeing/POIs MUST have \"type\" set to \"Activity\".");
+        sb.AppendLine("11. Budget Allocation Rule: You MUST ensure that the sum of the 'approximateCost' values across all suggested activities and dining spots is highly reasonable and fits within the traveler's total budget. Tailor the experiences to match the budget tier (e.g. free/budget activities for low budgets, and luxury/premium dining for generous budgets).");
 
         return sb.ToString();
     }

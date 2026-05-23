@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using TravelTrek.Infrastructure.Data;
 
@@ -11,9 +12,11 @@ using TravelTrek.Infrastructure.Data;
 namespace TravelTrek.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260523151302_AddApproximateCostToActivity")]
+    partial class AddApproximateCostToActivity
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -252,43 +255,6 @@ namespace TravelTrek.Infrastructure.Data.Migrations
                     b.ToTable("DayPlans");
                 });
 
-            modelBuilder.Entity("TravelTrek.Domain.Entities.Trip.SharedTripToken", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("datetime2")
-                        .HasDefaultValueSql("GETUTCDATE()");
-
-                    b.Property<DateTime?>("ExpiresAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<bool>("IsRevoked")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bit")
-                        .HasDefaultValue(false);
-
-                    b.Property<string>("Token")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
-
-                    b.Property<Guid>("TripPlanId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Token")
-                        .IsUnique();
-
-                    b.HasIndex("TripPlanId");
-
-                    b.ToTable("SharedTripTokens");
-                });
-
             modelBuilder.Entity("TravelTrek.Domain.Entities.Trip.TripPlan", b =>
                 {
                     b.Property<Guid>("Id")
@@ -511,41 +477,6 @@ namespace TravelTrek.Infrastructure.Data.Migrations
                 {
                     b.HasOne("TravelTrek.Domain.Entities.Trip.TripPlan", "TripPlan")
                         .WithMany("Days")
-                        .HasForeignKey("TripPlanId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.OwnsOne("TravelTrek.Domain.Entities.Trip.MealPlan", "Meals", b1 =>
-                        {
-                            b1.Property<Guid>("DayPlanId")
-                                .HasColumnType("uniqueidentifier");
-
-                            b1.Property<string>("Breakfast")
-                                .HasColumnType("nvarchar(max)");
-
-                            b1.Property<string>("Dinner")
-                                .HasColumnType("nvarchar(max)");
-
-                            b1.Property<string>("Lunch")
-                                .HasColumnType("nvarchar(max)");
-
-                            b1.HasKey("DayPlanId");
-
-                            b1.ToTable("DayPlans");
-
-                            b1.WithOwner()
-                                .HasForeignKey("DayPlanId");
-                        });
-
-                    b.Navigation("Meals");
-
-                    b.Navigation("TripPlan");
-                });
-
-            modelBuilder.Entity("TravelTrek.Domain.Entities.Trip.SharedTripToken", b =>
-                {
-                    b.HasOne("TravelTrek.Domain.Entities.Trip.TripPlan", "TripPlan")
-                        .WithMany()
                         .HasForeignKey("TripPlanId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();

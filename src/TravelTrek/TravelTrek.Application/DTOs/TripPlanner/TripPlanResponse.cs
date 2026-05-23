@@ -38,6 +38,14 @@ public class DayPlanDto
 {
     public int DayNumber { get; set; }
     public List<ActivityDto> Activities { get; set; } = new();
+    public MealPlanDto? Meals { get; set; }
+}
+
+public class MealPlanDto
+{
+    public string? Breakfast { get; set; }
+    public string? Lunch { get; set; }
+    public string? Dinner { get; set; }
 }
 
 /// <summary>
@@ -50,5 +58,6 @@ public class ActivityDto
     public string? GoogleMapsLink { get; set; }
     public string? Website { get; set; }
     public string? City { get; set; }
+    public string? ApproximateCost { get; set; }
     public string Type { get; set; } = "Activity";
 }
