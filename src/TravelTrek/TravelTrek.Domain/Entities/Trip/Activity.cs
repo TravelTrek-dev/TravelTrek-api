@@ -9,7 +9,7 @@ public class Activity
     public string? GoogleMapsLink { get; set; }
     public string? Website { get; set; }
     public string? City { get; set; }
-    
+    public string Type { get; set; } = "Activity";
     
     public DayPlan DayPlan { get; set; } = null!;
 }

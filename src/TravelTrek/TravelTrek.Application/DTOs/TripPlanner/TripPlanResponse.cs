@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TravelTrek.Application.DTOs.TripPlanner;
 
 /// <summary>
@@ -5,7 +7,8 @@ namespace TravelTrek.Application.DTOs.TripPlanner;
 /// </summary>
 public class TripPlanResponse
 {
-    public Guid Id { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? Id { get; set; }
     public string City { get; set; } = string.Empty;
     public string? Country { get; set; }
     public string? Duration { get; set; }
@@ -47,4 +50,5 @@ public class ActivityDto
     public string? GoogleMapsLink { get; set; }
     public string? Website { get; set; }
     public string? City { get; set; }
+    public string Type { get; set; } = "Activity";
 }

@@ -100,6 +100,7 @@ namespace TravelTrek.Infrastructure
             services.Configure<JwtSettings>(configuration.GetSection("JwtSettings"));
             services.Configure<GoogleSettings>(configuration.GetSection("Google"));
             services.Configure<EmailSettings>(configuration.GetSection("EmailSettings"));
+            services.Configure<OpenTripMapApiOptions>(configuration.GetSection(OpenTripMapApiOptions.SectionName));
 
             #region FluentEmail
 
@@ -182,15 +183,15 @@ namespace TravelTrek.Infrastructure
             services.AddHttpClient<ILLMService, OpenAIService>(client =>
                 {
                     client.BaseAddress = new Uri(configuration[$"{OpenAIApiOptions.SectionName}:BaseUrl"]!);
-                    client.Timeout = TimeSpan.FromMinutes(3);
+                    client.Timeout = TimeSpan.FromSeconds(60);
                     client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
                         "Bearer", configuration[$"{OpenAIApiOptions.SectionName}:ApiKey"]!);
                 })
                 .AddStandardResilienceHandler(options =>
                 {
-                    options.AttemptTimeout.Timeout = TimeSpan.FromMinutes(3);
-                    options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(3);
-                    options.CircuitBreaker.SamplingDuration = TimeSpan.FromMinutes(6);
+                    options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(60);
+                    options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(60);
+                    options.CircuitBreaker.SamplingDuration = TimeSpan.FromMinutes(2);
                 });
 
             #endregion
