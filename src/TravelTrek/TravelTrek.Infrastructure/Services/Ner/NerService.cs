@@ -22,7 +22,7 @@ public class NerService : INerService
         _logger = logger;
     }
 
-    public async Task<Result<IEnumerable<NerEntity>>> ExtractEntitiesAsync(NerRequest request, CancellationToken ct = default)
+    public async Task<Result<List<NerEntity>>> ExtractEntitiesAsync(NerRequest request, CancellationToken ct = default)
     {
         try
         {
@@ -30,32 +30,32 @@ public class NerService : INerService
 
             if ((int)response.StatusCode >= 500)
             {
-                return Result.Failure<IEnumerable<NerEntity>>(Error.External("NerApi.ServerError", $"NER API server error: {(int)response.StatusCode}."));
+                return Result.Failure<List<NerEntity>>(Error.External("NerApi.ServerError", $"NER API server error: {(int)response.StatusCode}."));
             }
 
             if (!response.IsSuccessStatusCode)
             {
-                return Result.Failure<IEnumerable<NerEntity>>(Error.Internal("NerApi.Error", $"Unexpected response: {(int)response.StatusCode}."));
+                return Result.Failure<List<NerEntity>>(Error.Internal("NerApi.Error", $"Unexpected response: {(int)response.StatusCode}."));
             }
 
             var value = await response.Content.ReadFromJsonAsync<IEnumerable<NerEntity>>(cancellationToken: ct);
             if (value is null)
             {
-                return Result.Failure<IEnumerable<NerEntity>>(Error.Internal("NerApi.EmptyResponse", "Empty response from NER API."));
+                return Result.Failure<List<NerEntity>>(Error.Internal("NerApi.EmptyResponse", "Empty response from NER API."));
             }
 
-            return Result.Success(value);
+            return Result.Success(value.ToList());
         }
         catch(HttpRequestException ex)
         {
             _logger.LogWarning(ex, "Failed to connect to ner service");
-            return Result.Failure<IEnumerable<NerEntity>>(Error.External("NerApi.ServerError", "NER API is not available at the moment."));
+            return Result.Failure<List<NerEntity>>(Error.External("NerApi.ServerError", "NER API is not available at the moment."));
             
         }
         catch (JsonException ex)
         {
             _logger.LogWarning(ex, "Failed to parse NER API response.");
-            return Result.Failure<IEnumerable<NerEntity>>(Error.Internal("NerApi.ParseError", "Failed to parse NER API response."));
+            return Result.Failure<List<NerEntity>>(Error.Internal("NerApi.ParseError", "Failed to parse NER API response."));
         }
     }
 
@@ -102,7 +102,7 @@ public class NerService : INerService
         return Result.Success(data);
     }
 
-    public async Task<Result<FeasibilityResult>> CheckFeasibilityAsync(IEnumerable<NerEntity> nerOutput, CancellationToken ct = default)
+    public async Task<Result<FeasibilityResult>> CheckFeasibilityAsync(List<NerEntity> nerOutput, CancellationToken ct = default)
     {
         try
         {

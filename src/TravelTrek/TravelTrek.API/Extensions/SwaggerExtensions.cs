@@ -1,4 +1,5 @@
 using Microsoft.OpenApi.Models;
+using Microsoft.Extensions.Configuration;
 
 namespace TravelTrek.API.Extensions
 {
@@ -48,7 +49,8 @@ namespace TravelTrek.API.Extensions
 
         public static WebApplication UseSwaggerInDevelopment(this WebApplication app)
         {
-            if (app.Environment.IsDevelopment())
+            var enableSwaggerInProduction = app.Configuration.GetValue<bool>("EnableSwaggerInProduction");
+            if (app.Environment.IsDevelopment() || enableSwaggerInProduction)
             {
                 app.UseSwagger();
                 app.UseSwaggerUI(options =>

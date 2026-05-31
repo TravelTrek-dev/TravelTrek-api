@@ -22,11 +22,12 @@ public class TripPlanService : ITripPlanService
     private readonly ILLMService _illmService;
     private readonly ILogger<TripPlanService> _logger;
     private readonly ITripPlanRepository _tripPlanRepository;
+    private readonly IExpenseRepository _expenseRepository;
     private readonly IGenericRepository<SharedTripToken> _sharedTokenRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
 
-
+    
     private const int MinPoisPerDay = 3;
     private const int DefaultPoiLimit = 12;
 
@@ -36,7 +37,7 @@ public class TripPlanService : ITripPlanService
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    public TripPlanService(INerService nerService, IOsmService osmService, IOpenWeatherService weatherService, ILLMService illmService, ILogger<TripPlanService> logger, ITripPlanRepository tripPlanRepository, IGenericRepository<SharedTripToken> sharedTokenRepository, IUnitOfWork unitOfWork, IMapper mapper)
+    public TripPlanService(INerService nerService, IOsmService osmService, IOpenWeatherService weatherService, ILLMService illmService, ILogger<TripPlanService> logger, ITripPlanRepository tripPlanRepository, IExpenseRepository expenseRepository, IGenericRepository<SharedTripToken> sharedTokenRepository, IUnitOfWork unitOfWork, IMapper mapper)
     {
         _nerService = nerService;
         _osmService = osmService;
@@ -44,6 +45,7 @@ public class TripPlanService : ITripPlanService
         _illmService = illmService;
         _logger = logger;
         _tripPlanRepository = tripPlanRepository;
+        _expenseRepository = expenseRepository;
         _sharedTokenRepository = sharedTokenRepository;
         _unitOfWork = unitOfWork;
         _mapper = mapper;
@@ -68,15 +70,13 @@ public class TripPlanService : ITripPlanService
         }
 
         var tripData = ParseTripData(rawEntities);
-        var cities = tripData.Locations;
-        if (cities.Count == 0)
+        if (tripData.Locations.Count == 0)
         {
             return Result.Failure<TripPlanResponse>(Error.Validation("TripPlan.NoCity", "Could not extract a destination city from your prompt. Please include a city name."));
         }
 
         _logger.LogInformation("NER extracted — City: {cities}, Duration: {Duration}, Budget: {Budget}, GroupSize: {GroupSize}",
-            cities, tripData.Durations.FirstOrDefault() ?? "N/A", tripData.Budgets.FirstOrDefault() ?? "N/A", tripData.GroupSizes.FirstOrDefault() ?? "N/A");
-        
+            tripData.Locations, tripData.Durations.FirstOrDefault() ?? "N/A", tripData.Budgets.FirstOrDefault() ?? "N/A", tripData.GroupSizes.FirstOrDefault() ?? "N/A");
         
         
         var osmTask = tripData.Locations.Select(city => _osmService.GetTopAttractionsAsync(city, DefaultPoiLimit, ct));
@@ -89,7 +89,7 @@ public class TripPlanService : ITripPlanService
         var context = new TripContext
         {
             UserPrompt = request.Prompt,
-            Cities = cities,
+            Cities = tripData.Locations,
             TripData = tripData,
             Attractions = attractionsResults.Where(result => result.IsSuccess).SelectMany(result => result.Value).ToList(),
             Weather = weatherResults.ToList()
@@ -104,7 +104,9 @@ public class TripPlanService : ITripPlanService
 
         var plan = TryParseLlmResponse(llmResult.Value);
         if (plan == null)
+        {
             return Result.Failure<TripPlanResponse>(Error.External("TripPlan.ParseFailed", "Failed to parse the generated itinerary. Please try again."));
+        }
 
         PatchMissingFields(plan, context);
         return Result.Success(plan);
@@ -171,14 +173,19 @@ public class TripPlanService : ITripPlanService
 
         return Result.Success(tripPlan.Id);
     }
+    
     public async Task<Result> UpdateTripPlanAsync(Guid tripId, SaveTripPlanRequest updatedPlanDto, Guid userId, CancellationToken ct = default)
     {
         var existingTrip = await _tripPlanRepository.GetTripPlanWithDetailsAsync(tripId);
         if (existingTrip == null)
+        {
             return Result.Failure(Error.NotFound("TripPlan.NotFound", "The trip could not be found."));
+        }
 
         if (existingTrip.UserId != userId)
+        {
             return Result.Failure(Error.Forbidden("TripPlan.Forbidden", "You do not have permission to edit this trip."));
+        }
 
         _mapper.Map(updatedPlanDto, existingTrip);
 
@@ -231,6 +238,7 @@ public class TripPlanService : ITripPlanService
         var tripPlansDto = _mapper.Map<IEnumerable<TripPlanResponse>>(tripPlans);
         return Result.Success(tripPlansDto);
     }
+    
     public async Task<Result<ShareTripResponse>> ShareTripPlanAsync(Guid tripId, Guid userId, CancellationToken ct = default)
     {
         var trip = await _tripPlanRepository.GetByIdAsync(tripId);
@@ -351,6 +359,101 @@ public class TripPlanService : ITripPlanService
         return Result.Success(clonedPlan.Id);
     }
 
+    public async Task<Result<Guid>> AddTripExpenseAsync(CreateExpenseDto request, Guid tripPlanId, Guid userId, CancellationToken ct = default)
+    {
+        var tripPlan = await _tripPlanRepository.GetByIdAsync(tripPlanId);
+        if (tripPlan == null)
+        {
+            return Result.Failure<Guid>(Error.NotFound("AddTripExpense.NotFound", "Trip does not exist"));
+        }
+
+        if (tripPlan.UserId != userId)
+        {
+            return Result.Failure<Guid>(Error.Forbidden("AddTripExpense.Forbidden", "Forbidden request"));
+        }
+        
+        var newExpense = new Expense()
+        {
+            TripPlanId = tripPlanId,
+            UserId = userId
+        };
+
+        _mapper.Map(request, newExpense);
+
+        await _expenseRepository.AddAsync(newExpense);
+        await _unitOfWork.SaveChangesAsync();
+
+        return Result.Success(newExpense.Id);
+    }
+    
+    public async Task<Result> EditTripExpenseAsync(EditExpenseDto request, Guid id, Guid userId, CancellationToken ct = default)
+    {
+        var expense = await _expenseRepository.GetByIdAsync(id);
+        if (expense == null)
+        {
+            return Result.Failure(Error.NotFound("EditTripExpense.NotFound", "Expense does not exist"));
+        }
+        if (expense.UserId != userId)
+        {
+            return Result.Failure(Error.Forbidden("EditTripExpense.Forbidden", "Forbidden request"));
+        }
+
+        _mapper.Map(request, expense);
+
+        _expenseRepository.Update(expense);
+        await _unitOfWork.SaveChangesAsync();
+
+        return Result.Success();
+    }
+
+    public async Task<Result> DeleteTripExpenseAsync(Guid id, Guid userId, CancellationToken ct = default)
+    {
+        var expense = await _expenseRepository.GetByIdAsync(id);
+        if (expense == null)
+        {
+            return Result.Failure(Error.NotFound("DeleteTripExpense.NotFound", "Expense does not exist"));
+        }
+        if (expense.UserId != userId)
+        {
+            return Result.Failure(Error.Forbidden("DeleteTripExpense.Forbidden", "Forbidden request"));
+        }
+        
+        _expenseRepository.Delete(expense);
+        await _unitOfWork.SaveChangesAsync();
+
+        return Result.Success();
+    }
+    
+    public async Task<Result<ExpensesDto>> GetTripExpensesAsync(Guid tripPlanId, Guid userId, CancellationToken ct = default)
+    {
+        var tripPlan = await _tripPlanRepository.GetByIdAsync(tripPlanId);
+        if (tripPlan == null)
+        {
+            return Result.Failure<ExpensesDto>(Error.NotFound("GetTripExpenses.NotFound", "Trip does not exist"));
+        }
+
+        if (tripPlan.UserId != userId)
+        {
+            return Result.Failure<ExpensesDto>(Error.Forbidden("GetTripExpenses.Forbidden", "Forbidden request"));
+        }
+        var expenses = await _expenseRepository.GetForTrip(tripPlanId);
+
+        var spent = expenses.Sum(e => e.Price);
+        var remaining = tripPlan.Budget - spent;
+        var remainingValue = remaining ?? 0m;
+        var expensesDto = new ExpensesDto()
+        {
+            City = tripPlan.City,
+            Expenses = _mapper.Map<List<ExpenseDto>>(expenses),
+            Budget = tripPlan.Budget ?? 0m,
+            Spent  = spent,
+            Remaining = remainingValue > 0 ? remainingValue : 0m,
+            Currency = tripPlan.Currency ?? ""
+        };
+
+        return Result.Success(expensesDto);
+    }
+
     #region Helpers
 
     private async Task<WeatherSummaryDto?> GetWeatherForCityAsync(string city, CancellationToken ct)
@@ -367,14 +470,29 @@ public class TripPlanService : ITripPlanService
             var coords = new WeatherRequest(geocodeResult.Value.Lat, geocodeResult.Value.Lon);
 
             var forecastResult = await _weatherService.GetForecastAsync(coords, ct);
+            var forecast = forecastResult.Value;
             if (forecastResult.IsSuccess && forecastResult.Value.Items.Count > 0)
-                return SummarizeForecast(forecastResult.Value);
+            {
+                return new WeatherSummaryDto
+                {
+                    AvgTempCelsius = Math.Round(forecast.Items.Average(i => i.Main.Temp), 1),
+                    Condition = forecast.Items
+                        .SelectMany(i => i.Weather)
+                        .GroupBy(w => w.Main)
+                        .OrderByDescending(g => g.Count())
+                        .First().Key,
+                    AvgHumidity = Math.Round(forecast.Items.Average(i => i.Main.Humidity), 1),
+                    AvgWindSpeed = Math.Round(forecast.Items.Average(i => i.Wind.Speed), 1)
+                };
+            }
 
             _logger.LogWarning("Forecast unavailable for '{City}', falling back to current weather.", city);
 
             var currentResult = await _weatherService.GetCurrentWeatherAsync(coords, ct);
             if (currentResult.IsFailure)
+            {
                 return null;
+            }
 
             var c = currentResult.Value;
             return new WeatherSummaryDto
@@ -391,47 +509,43 @@ public class TripPlanService : ITripPlanService
             return null;
         }
     }
-
-    private static WeatherSummaryDto SummarizeForecast(ForecastResponse forecast)
-    {
-        return new WeatherSummaryDto
+    
+    private static ExtractedTripData ParseTripData(List<NerEntity> entities)
         {
-            AvgTempCelsius = Math.Round(forecast.Items.Average(i => i.Main.Temp), 1),
-            Condition = forecast.Items
-                .SelectMany(i => i.Weather)
-                .GroupBy(w => w.Main)
-                .OrderByDescending(g => g.Count())
-                .First().Key,
-            AvgHumidity = Math.Round(forecast.Items.Average(i => i.Main.Humidity), 1),
-            AvgWindSpeed = Math.Round(forecast.Items.Average(i => i.Wind.Speed), 1)
-        };
-    }
-
-    private static string BuildRefinePlanLlmPrompt(string tripPlan, string userPrompt)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine("You are an expert travel editor. I will provide you with a current JSON travel itinerary and a specific user instruction on how to change it.");
-        sb.AppendLine();
-        
-        sb.AppendLine("=== current JSON travel itinerary ===");
-        sb.AppendLine(tripPlan);
-        sb.AppendLine();
-        
-        sb.AppendLine("=== user instruction ===");
-        sb.AppendLine(userPrompt);
-        sb.AppendLine();
-        
-        sb.AppendLine("=== OUTPUT FORMAT ===");
-        sb.AppendLine("Return ONLY valid JSON (no markdown, no explanation) matching the exact schema of the current JSON travel itinerary.");
-        sb.AppendLine();
-        sb.AppendLine("IMPORTANT RULES:");
-        sb.AppendLine("1. Keep the JSON structure exactly the same.");
-        sb.AppendLine("2. If you add a new activity that was not in the original plan, generate a Google Maps search link using this exact format: https://www.google.com/maps/search/?api=1&query=Activity+Name,+City+Name (replace spaces with +). If you don't know the website, set website to null.");
-        sb.AppendLine("3. Only apply the user's specific instruction, keeping the rest of the plan intact.");
-
-        return sb.ToString();
-    }
-
+            var data = new ExtractedTripData();
+            foreach (var entity in entities)
+            {
+                var word = entity.Word.Trim();
+                if (string.IsNullOrWhiteSpace(word)) continue;
+    
+                switch (entity.EntityGroup.ToUpperInvariant())
+                {
+                    case "LOCATION":
+                        data.Locations.Add(word);
+                        break;
+                    case "DATE":
+                        data.Dates.Add(word);
+                        break;
+                    case "DURATION":
+                        data.Durations.Add(word);
+                        break;
+                    case "BUDGET":
+                        data.Budgets.Add(word);
+                        break;
+                    case "GROUP_SIZE":
+                        data.GroupSizes.Add(word);
+                        break;
+                    case "TRAVEL_TYPE":
+                        data.TravelTypes.Add(word);
+                        break;
+                    case "ACTIVITY":
+                        data.Activities.Add(word);
+                        break;
+                }
+            }
+            return data;
+        }
+    
     private static string BuildGeneratePlanLlmPrompt(TripContext context)
     {
         var sb = new StringBuilder();
@@ -487,6 +601,12 @@ public class TripPlanService : ITripPlanService
             }
             sb.AppendLine();
         }
+        else
+        {
+            sb.AppendLine("=== AVAILABLE POINTS OF INTEREST ===");
+            sb.AppendLine("No pre-extracted points of interest are available. You MUST fetch, search, and recommend top points of interest and attractions using: https://www.lonelyplanet.com/");
+            sb.AppendLine();
+        }
 
         sb.AppendLine("=== OUTPUT FORMAT ===");
         sb.AppendLine("Return ONLY valid JSON (no markdown, no explanation) with this exact structure:");
@@ -494,7 +614,8 @@ public class TripPlanService : ITripPlanService
           ""city"": ""string"",
           ""country"": ""string"",
           ""duration"": ""string (e.g. '5 days', '1 week')"",
-          ""budget"": ""string or null"",
+          ""budget"": number or null,
+          ""currency"": ""string or null (e.g. 'USD', 'EUR', 'EGP')"",
           ""groupSize"": ""string or null"",
           ""weather"": {
             ""avgTempCelsius"": number,
@@ -534,11 +655,36 @@ public class TripPlanService : ITripPlanService
         sb.AppendLine("4. For activities in the provided POI list, use the exact Google Maps link provided (which contains coordinates). For activities NOT in the provided POI list, you MUST generate a Google Maps search link by name in this exact format: https://www.google.com/maps/search/?api=1&query=Activity+Name,+City+Name (replace spaces with +). NEVER guess website URLs, set website to null if unknown.");
         sb.AppendLine("5. Consider weather when planning outdoor vs indoor activities.");
         sb.AppendLine("6. Provide logical sequencing of places based on context.");
-        sb.AppendLine("7. if budget (in dollars), duration or group size are null, fill them with what you find suitable for the destination");
+        sb.AppendLine("7. if budget (in numeric format), currency, duration or group size are null, fill them with what you find suitable for the destination");
         sb.AppendLine("8. Return ONLY the JSON, no other text.");
         sb.AppendLine("9. You MUST include activities from ALL the extracted destination cities. Divide the number of days equally among the cities if possible (e.g., for a 4-day trip to 2 cities, assign the first 2 days to the first city, and the next 2 days to the second city). Group days by city sequentially so the traveler does not jump back and forth between cities.");
         sb.AppendLine("10. Multi-City Transit Rule: For multi-city trips, when transitioning between different cities (e.g., Day 2 is Paris and Day 3 is Marseille), you MUST insert a transit block at the end of Day 2 or the start of Day 3. Set its \"type\" property to \"Transit\", \"name\" to something descriptive (e.g., \"Transit: Paris to Marseille by Train\"), \"city\" to the destination city, and \"description\" to practical advice (e.g., \"Board the high-speed TGV train from Gare de Lyon... duration 3 hours\"). Normal sightseeing/POIs MUST have \"type\" set to \"Activity\".");
         sb.AppendLine("11. Budget Allocation Rule: You MUST ensure that the sum of the 'approximateCost' values across all suggested activities and dining spots is highly reasonable and fits within the traveler's total budget. Tailor the experiences to match the budget tier (e.g. free/budget activities for low budgets, and luxury/premium dining for generous budgets).");
+
+        return sb.ToString();
+    }
+
+    private static string BuildRefinePlanLlmPrompt(string tripPlan, string userPrompt)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("You are an expert travel editor. I will provide you with a current JSON travel itinerary and a specific user instruction on how to change it.");
+        sb.AppendLine();
+        
+        sb.AppendLine("=== current JSON travel itinerary ===");
+        sb.AppendLine(tripPlan);
+        sb.AppendLine();
+        
+        sb.AppendLine("=== user instruction ===");
+        sb.AppendLine(userPrompt);
+        sb.AppendLine();
+        
+        sb.AppendLine("=== OUTPUT FORMAT ===");
+        sb.AppendLine("Return ONLY valid JSON (no markdown, no explanation) matching the exact schema of the current JSON travel itinerary.");
+        sb.AppendLine();
+        sb.AppendLine("IMPORTANT RULES:");
+        sb.AppendLine("1. Keep the JSON structure exactly the same.");
+        sb.AppendLine("2. If you add a new activity that was not in the original plan, generate a Google Maps search link using this exact format: https://www.google.com/maps/search/?api=1&query=Activity+Name,+City+Name (replace spaces with +). If you don't know the website, set website to null.");
+        sb.AppendLine("3. Only apply the user's specific instruction, keeping the rest of the plan intact.");
 
         return sb.ToString();
     }
@@ -580,7 +726,8 @@ public class TripPlanService : ITripPlanService
     {
         if (string.IsNullOrWhiteSpace(plan.City)) plan.City = string.Join(", ", context.Cities);
         if (string.IsNullOrWhiteSpace(plan.Duration)) plan.Duration = context.TripData.Durations.FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(plan.Budget)) plan.Budget = context.TripData.Budgets.FirstOrDefault();
+        if (plan.Budget == null || plan.Budget == 0) plan.Budget = 2000m;
+        if (string.IsNullOrWhiteSpace(plan.Currency)) plan.Currency = "USD";
         if (string.IsNullOrWhiteSpace(plan.GroupSize)) plan.GroupSize = context.TripData.GroupSizes.FirstOrDefault();
         
         if (context.Weather != null)
@@ -589,42 +736,6 @@ public class TripPlanService : ITripPlanService
         }
     }
 
-    private static ExtractedTripData ParseTripData(IEnumerable<NerEntity> entities)
-    {
-        var data = new ExtractedTripData();
-        foreach (var entity in entities)
-        {
-            var word = entity.Word.Trim();
-            if (string.IsNullOrWhiteSpace(word)) continue;
-
-            switch (entity.EntityGroup.ToUpperInvariant())
-            {
-                case "LOCATION":
-                    data.Locations.Add(word);
-                    break;
-                case "DATE":
-                    data.Dates.Add(word);
-                    break;
-                case "DURATION":
-                    data.Durations.Add(word);
-                    break;
-                case "BUDGET":
-                    data.Budgets.Add(word);
-                    break;
-                case "GROUP_SIZE":
-                    data.GroupSizes.Add(word);
-                    break;
-                case "TRAVEL_TYPE":
-                    data.TravelTypes.Add(word);
-                    break;
-                case "ACTIVITY":
-                    data.Activities.Add(word);
-                    break;
-            }
-        }
-        return data;
-    }
-    
     private sealed class TripContext
     {
         public required string UserPrompt { get; init; }
@@ -635,5 +746,4 @@ public class TripPlanService : ITripPlanService
     }
 
     #endregion
-
 }

@@ -40,6 +40,23 @@ namespace TravelTrek.Application.Mappings
             CreateMap<Activity, ActivityDto>();
             CreateMap<WeatherSummary, WeatherSummaryDto>();
             CreateMap<MealPlan, MealPlanDto>();
+            CreateMap<ExpenseDto, Expense>()
+                .ForMember(dest => dest.Id, opt => opt.Ignore())
+                .ForMember(dest => dest.TripPlanId, opt => opt.Ignore())
+                .ForMember(dest => dest.UserId, opt => opt.Ignore());
+
+            CreateMap<CreateExpenseDto, Expense>()
+                .ForMember(dest => dest.Id, opt => opt.Ignore())
+                .ForMember(dest => dest.TripPlanId, opt => opt.Ignore())
+                .ForMember(dest => dest.UserId, opt => opt.Ignore());
+
+            CreateMap<EditExpenseDto, Expense>()
+                .ForMember(dest => dest.Id, opt => opt.Ignore())
+                .ForMember(dest => dest.TripPlanId, opt => opt.Ignore())
+                .ForMember(dest => dest.UserId, opt => opt.Ignore());
+
+            CreateMap<Expense, ExpenseDto>();
+            
         }
     }
 }

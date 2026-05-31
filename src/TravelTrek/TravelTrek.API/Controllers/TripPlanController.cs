@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using TravelTrek.Application.DTOs.TripPlanner;
 using TravelTrek.Application.Interfaces;
 using TravelTrek.Domain.Common;
@@ -16,7 +17,9 @@ namespace TravelTrek.API.Controllers
             _tripPlanService = tripPlanService;
         }
         
+        
         [Authorize]
+        [EnableRateLimiting("trip-generate")]
         [HttpPost("generate")]
         public async Task<IActionResult> GenerateTripPlan([FromBody] TripPlanRequest request, CancellationToken ct)
         {
@@ -25,6 +28,7 @@ namespace TravelTrek.API.Controllers
         }
 
         [Authorize]
+        [EnableRateLimiting("trip-db")]
         [HttpPost("save-created")]
         public async Task<IActionResult> SaveCreatedTripPlan([FromBody] SaveTripPlanRequest request, CancellationToken ct)
         {
@@ -36,6 +40,7 @@ namespace TravelTrek.API.Controllers
         }
 
         [Authorize]
+        [EnableRateLimiting("trip-db")]
         [HttpPut("{id}")]
         public async Task<IActionResult> UpdateTripPlan(Guid id, [FromBody] SaveTripPlanRequest request, CancellationToken ct)
         {
@@ -47,6 +52,7 @@ namespace TravelTrek.API.Controllers
         }
 
         [Authorize]
+        [EnableRateLimiting("trip-db")]
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteTripPlan(Guid id, CancellationToken ct)
         {
@@ -58,6 +64,7 @@ namespace TravelTrek.API.Controllers
         }
 
         [Authorize]
+        [EnableRateLimiting("trip-db")]
         [HttpGet("{id}")]
         public async Task<IActionResult> GetTripPlan(Guid id)
         {
@@ -69,6 +76,7 @@ namespace TravelTrek.API.Controllers
         }
 
         [Authorize]
+        [EnableRateLimiting("trip-db")]
         [HttpGet]
         public async Task<IActionResult> GetTripPlans()
         {
@@ -80,6 +88,7 @@ namespace TravelTrek.API.Controllers
         }
 
         [Authorize]
+        [EnableRateLimiting("trip-generate")]
         [HttpPost("refine/{id}")]
         public async Task<IActionResult> RefinePlan(Guid id, [FromBody]RefinePlanRequest request, CancellationToken ct)
         {
@@ -91,6 +100,7 @@ namespace TravelTrek.API.Controllers
         }
 
         [Authorize]
+        [EnableRateLimiting("trip-db")]
         [HttpPost("save-refined/{id}")]
         public async Task<IActionResult> SaveRefinedTripPlan(Guid id, [FromBody] SaveTripPlanRequest request, CancellationToken ct)
         {
@@ -102,6 +112,7 @@ namespace TravelTrek.API.Controllers
         }
 
         [Authorize]
+        [EnableRateLimiting("trip-db")]
         [HttpPost("{id}/share")]
         public async Task<IActionResult> ShareTripPlan(Guid id, CancellationToken ct)
         {
@@ -112,6 +123,7 @@ namespace TravelTrek.API.Controllers
             return ToActionResult(result);
         }
 
+        [EnableRateLimiting("trip-db")]
         [HttpGet("shared/{token}")]
         public async Task<IActionResult> GetSharedTripPlan(string token, CancellationToken ct)
         {
@@ -120,6 +132,7 @@ namespace TravelTrek.API.Controllers
         }
 
         [Authorize]
+        [EnableRateLimiting("trip-db")]
         [HttpPost("clone/{token}")]
         public async Task<IActionResult> CloneTripPlan(string token, CancellationToken ct)
         {
@@ -128,6 +141,50 @@ namespace TravelTrek.API.Controllers
 
             var result = await _tripPlanService.CloneTripPlanAsync(token, userId, ct);
             return ToCreatedResult(result);
+        }
+
+        [Authorize]
+        [HttpPost("expense/{tripId}")]
+        public async Task<IActionResult> AddTripExpense([FromBody] CreateExpenseDto request, Guid tripId, CancellationToken ct)
+        {
+            var userId = GetUserId();
+            if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("AddTripExpense.Unauthorized", "Unauthorized Request")));
+
+            var result = await _tripPlanService.AddTripExpenseAsync(request, tripId, userId, ct);
+            return ToCreatedResult(result);
+        }
+
+        [Authorize]
+        [HttpGet("expense/{tripId}")]
+        public async Task<IActionResult> GetTripExpenses(Guid tripId, CancellationToken ct)
+        {
+            var userId = GetUserId();
+            if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("GetTripExpenses.Unauthorized", "Unauthorized Request")));
+
+            var result = await _tripPlanService.GetTripExpensesAsync(tripId, userId, ct);
+            return ToActionResult(result);
+        }
+
+        [Authorize]
+        [HttpPut("expense/{id}")]
+        public async Task<IActionResult> UpdateTripExpense([FromBody] EditExpenseDto request, Guid id, CancellationToken ct)
+        {
+            var userId = GetUserId();
+            if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("UpdateTripExpense.Unauthorized", "Unauthorized Request")));
+
+            var result = await _tripPlanService.EditTripExpenseAsync(request, id, userId, ct);
+            return ToActionResult(result);
+        }
+        
+        [Authorize]
+        [HttpDelete("expense/{id}")]
+        public async Task<IActionResult> DeleteTripExpense(Guid id, CancellationToken ct)
+        {
+            var userId = GetUserId();
+            if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("UpdateTripExpense.Unauthorized", "Unauthorized Request")));
+
+            var result = await _tripPlanService.DeleteTripExpenseAsync(id, userId, ct);
+            return ToActionResult(result);
         }
     }
 }

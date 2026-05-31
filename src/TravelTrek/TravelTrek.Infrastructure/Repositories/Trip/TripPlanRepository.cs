@@ -20,5 +20,12 @@ namespace TravelTrek.Infrastructure.Repositories.Trip
         {
             return await _dbSet.Where(t => t.UserId == userId).Include(t => t.Days).ThenInclude(d => d.Activities).ToListAsync();
         }
+        
+        
+        
+        public async Task<bool> Exists(Guid id)
+        {
+            return await _dbSet.AnyAsync(e => e.Id == id);
+        }
     }
 }

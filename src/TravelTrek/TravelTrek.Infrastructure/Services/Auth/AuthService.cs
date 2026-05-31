@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Security.Claims;
 using TravelTrek.Application.DTOs.Auth;
+using TravelTrek.Application.DTOs.User;
 using TravelTrek.Application.Interfaces;
 using TravelTrek.Domain.Common;
 using TravelTrek.Domain.Entities;
@@ -124,9 +125,21 @@ namespace TravelTrek.Infrastructure.Services
         {
             try
             {
+                var allowedAudiences = new List<string>();
+                if (!string.IsNullOrWhiteSpace(_googleSettings.ClientId))
+                {
+                    allowedAudiences.Add(_googleSettings.ClientId);
+                }
+                if (_googleSettings.AllowedAudiences != null)
+                {
+                    allowedAudiences.AddRange(_googleSettings.AllowedAudiences);
+                }
+
                 var settings = new GoogleJsonWebSignature.ValidationSettings
                 {
-                    Audience = new[] { _googleSettings.ClientId }
+                    Audience = allowedAudiences,
+                    IssuedAtClockTolerance = TimeSpan.FromMinutes(5),
+                    ExpirationTimeClockTolerance = TimeSpan.FromMinutes(5)
                 };
 
                 var payload = await GoogleJsonWebSignature.ValidateAsync(request.IdToken, settings);
@@ -180,10 +193,10 @@ namespace TravelTrek.Infrastructure.Services
                     payload.Email, user.Id);
                 return await GenerateAuthResponseAsync(user);
             }
-            catch (InvalidJwtException)
+            catch (InvalidJwtException ex)
             {
-                _logger.LogWarning("Google sign-in failed — invalid or expired Google token.");
-                return Result.Failure<AuthResponse>(Error.Unauthorized("Auth.InvalidGoogleToken", "Invalid or expired Google token."));
+                _logger.LogWarning(ex, "Google sign-in failed — invalid or expired Google token. Reason: {Reason}", ex.Message);
+                return Result.Failure<AuthResponse>(Error.Unauthorized("Auth.InvalidGoogleToken", $"Invalid or expired Google token. Details: {ex.Message}"));
             }
         }
 
@@ -250,7 +263,14 @@ namespace TravelTrek.Infrastructure.Services
             return Result.Success(new AuthResponse(
                 _tokenService.GenerateAccessToken(user),
                 newRefreshToken.Token,
-                DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpiryMinutes)
+                DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpiryMinutes),
+                new UserDto(
+                    user.Id,
+                    user.Email ?? string.Empty,
+                    user.FullName,
+                    user.ProfilePictureUrl,
+                    user.PreferredLanguage
+                )
             ));
         }
 
@@ -396,7 +416,14 @@ namespace TravelTrek.Infrastructure.Services
             return Result.Success(new AuthResponse(
                 accessToken,
                 refreshToken.Token,
-                DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpiryMinutes)
+                DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpiryMinutes),
+                new UserDto(
+                    user.Id,
+                    user.Email ?? string.Empty,
+                    user.FullName,
+                    user.ProfilePictureUrl,
+                    user.PreferredLanguage
+                )
             ));
         } 
         #endregion

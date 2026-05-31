@@ -16,4 +16,8 @@ public interface ITripPlanService
     Task<Result<ShareTripResponse>> ShareTripPlanAsync(Guid tripId, Guid userId, CancellationToken ct = default);
     Task<Result<TripPlanResponse>> GetSharedTripPlanAsync(string token, CancellationToken ct = default);
     Task<Result<Guid>> CloneTripPlanAsync(string token, Guid userId, CancellationToken ct = default);
+    Task<Result<Guid>> AddTripExpenseAsync(CreateExpenseDto request, Guid tripPlanId, Guid userId, CancellationToken ct = default);
+    Task<Result<ExpensesDto>> GetTripExpensesAsync(Guid tripPlanId, Guid userId, CancellationToken ct = default);
+    Task<Result> EditTripExpenseAsync(EditExpenseDto request, Guid id, Guid userId, CancellationToken ct = default);
+    Task<Result> DeleteTripExpenseAsync(Guid id, Guid userId, CancellationToken ct = default);
 }

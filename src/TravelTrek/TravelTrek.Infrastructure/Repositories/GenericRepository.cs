@@ -59,5 +59,6 @@ namespace TravelTrek.Infrastructure.Repositories
         {
             _dbSet.RemoveRange(entities);
         }
+        
     }
 }

@@ -252,6 +252,39 @@ namespace TravelTrek.Infrastructure.Data.Migrations
                     b.ToTable("DayPlans");
                 });
 
+            modelBuilder.Entity("TravelTrek.Domain.Entities.Trip.Expense", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<decimal>("Price")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<Guid>("TripPlanId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TripPlanId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("Expenses");
+                });
+
             modelBuilder.Entity("TravelTrek.Domain.Entities.Trip.SharedTripToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -295,8 +328,8 @@ namespace TravelTrek.Infrastructure.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<string>("Budget")
-                        .HasColumnType("nvarchar(max)");
+                    b.Property<decimal?>("Budget")
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<string>("City")
                         .IsRequired()
@@ -304,6 +337,10 @@ namespace TravelTrek.Infrastructure.Data.Migrations
 
                     b.Property<string>("Country")
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Currency")
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
 
                     b.Property<string>("GeneralAdvice")
                         .HasColumnType("nvarchar(max)");
@@ -540,6 +577,25 @@ namespace TravelTrek.Infrastructure.Data.Migrations
                     b.Navigation("Meals");
 
                     b.Navigation("TripPlan");
+                });
+
+            modelBuilder.Entity("TravelTrek.Domain.Entities.Trip.Expense", b =>
+                {
+                    b.HasOne("TravelTrek.Domain.Entities.Trip.TripPlan", "TripPlan")
+                        .WithMany()
+                        .HasForeignKey("TripPlanId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TravelTrek.Domain.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("TripPlan");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("TravelTrek.Domain.Entities.Trip.SharedTripToken", b =>

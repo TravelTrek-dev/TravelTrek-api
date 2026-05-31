@@ -66,6 +66,14 @@ namespace TravelTrek.API.Extensions
 
                 options.AddPolicy("revoke-all", context =>
                     SlidingWindow(context.Connection.RemoteIpAddress?.ToString() ?? "unknown", 10, 60, 2));
+
+                // Trip Generation & Refinement (Expensive LLM ops) - 3 req / 1 min
+                options.AddPolicy("trip-generate", context =>
+                    SlidingWindow(context.Connection.RemoteIpAddress?.ToString() ?? "unknown", 3, 60, 2));
+
+                // Trip DB/Standard operations - 30 req / 1 min
+                options.AddPolicy("trip-db", context =>
+                    SlidingWindow(context.Connection.RemoteIpAddress?.ToString() ?? "unknown", 30, 60, 2));
             });
 
             return services;

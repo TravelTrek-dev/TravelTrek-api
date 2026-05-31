@@ -119,9 +119,7 @@ public class OpenWeatherService : IOpenWeatherService
         }
     }
 
-    public async Task<Result<ForecastResponse>> GetForecastAsync(
-        WeatherRequest request,
-        CancellationToken ct = default)
+    public async Task<Result<ForecastResponse>> GetForecastAsync(WeatherRequest request, CancellationToken ct = default)
     {
         var lat = Uri.EscapeDataString(request.Latitude.ToString(CultureInfo.InvariantCulture));
         var lon = Uri.EscapeDataString(request.Longitude.ToString(CultureInfo.InvariantCulture));
@@ -188,4 +186,5 @@ public class OpenWeatherService : IOpenWeatherService
                 "Failed to parse OpenWeather forecast response."));
         }
     }
+    
 }

@@ -1,3 +1,4 @@
+using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 using TravelTrek.API.Extensions;
@@ -30,6 +31,16 @@ namespace TravelTrek.API
                 builder.Services.AddProblemDetails();
                 builder.Services.AddAuthRateLimiting();
                 builder.Services.AddInfrastructureServices(builder.Configuration);
+                
+                builder.Services.AddSwaggerGen(options =>
+                {
+                    var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
+                    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+                    if (File.Exists(xmlPath))
+                    {
+                        options.IncludeXmlComments(xmlPath);
+                    }
+                });
 
                 var app = builder.Build();
 
@@ -49,6 +60,7 @@ namespace TravelTrek.API
                 app.UseAuthentication();
                 app.UseAuthorization();
                 app.MapControllers();
+                
 
                 Log.Information("TravelTrek API started successfully.");
                 app.Run();

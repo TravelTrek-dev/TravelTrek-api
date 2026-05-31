@@ -93,6 +93,7 @@ namespace TravelTrek.Infrastructure
             services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
             services.AddScoped<IUserRepository, UserRepository>();
             services.AddScoped<ITripPlanRepository, TripPlanRepository>();
+            services.AddScoped<IExpenseRepository, ExpenseRepository>();
             services.AddScoped<IUnitOfWork, UnitOfWork>();
 
             #endregion

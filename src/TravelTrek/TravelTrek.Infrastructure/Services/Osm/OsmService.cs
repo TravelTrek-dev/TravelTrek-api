@@ -14,7 +14,6 @@ public class OsmService : IOsmService
 {
     private readonly HttpClient _httpClient;
     private readonly OsmApiOptions _options;
-    private readonly OpenTripMapApiOptions _otmOptions;
     private readonly IOpenWeatherService _weatherService;
     private readonly ILogger<OsmService> _logger;
 
@@ -24,16 +23,10 @@ public class OsmService : IOsmService
         public double Lon { get; set; }
     }
 
-    public OsmService(
-        HttpClient httpClient, 
-        IOptions<OsmApiOptions> options,
-        IOptions<OpenTripMapApiOptions> otmOptions,
-        IOpenWeatherService weatherService,
-        ILogger<OsmService> logger)
+    public OsmService(HttpClient httpClient, IOptions<OsmApiOptions> options, IOpenWeatherService weatherService, ILogger<OsmService> logger)
     {
         _httpClient = httpClient;
         _options = options.Value;
-        _otmOptions = otmOptions.Value;
         _weatherService = weatherService;
         _logger = logger;
     }
@@ -50,7 +43,7 @@ public class OsmService : IOsmService
             request.Headers.Add("User-Agent", "TravelApp/1.0 (educational project)");
             
             var geoResponse = await _httpClient.SendAsync(request, ct);
-
+ 
             if (geoResponse.IsSuccessStatusCode)
             {
                 var geoDataStr = await geoResponse.Content.ReadAsStringAsync(ct);
@@ -62,7 +55,7 @@ public class OsmService : IOsmService
                     {
                         var latStr = latProp.GetString();
                         var lonStr = lonProp.GetString();
-
+ 
                         if (!string.IsNullOrEmpty(latStr) && !string.IsNullOrEmpty(lonStr) &&
                             double.TryParse(latStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var lat) &&
                             double.TryParse(lonStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var lon))
@@ -79,7 +72,7 @@ public class OsmService : IOsmService
         {
             _logger.LogWarning(ex, "Error during Nominatim geocoding for {City}.", cityName);
         }
-
+ 
         // 2. Fallback to OpenWeather Geocoding
         try
         {
@@ -97,10 +90,10 @@ public class OsmService : IOsmService
         {
             _logger.LogWarning(ex, "Error during fallback OpenWeather geocoding for {City}.", cityName);
         }
-
+ 
         return Result.Failure<CityCoordinates>(Error.NotFound("OsmService.GeocodeFailed", $"Failed to geocode city '{cityName}' using all available services."));
     }
-
+ 
     public async Task<Result<List<OsmAttractionDto>>> GetTopAttractionsAsync(string cityName, int limit = 40, CancellationToken ct = default)
     {
         var coordsResult = await GetCoordinatesAsync(cityName, ct);
@@ -109,11 +102,11 @@ public class OsmService : IOsmService
             _logger.LogError("Failed to resolve coordinates for {City}.", cityName);
             return Result.Failure<List<OsmAttractionDto>>(coordsResult.Error);
         }
-
+ 
         var coords = coordsResult.Value;
         var latStr = coords.Lat.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var lonStr = coords.Lon.ToString(System.Globalization.CultureInfo.InvariantCulture);
-
+ 
         // osm
         try
         {
@@ -132,7 +125,7 @@ public class OsmService : IOsmService
             {
                 new KeyValuePair<string, string>("data", overpassQuery)
             });
-
+ 
             var overpassResponse = await _httpClient.PostAsync($"{_options.OverpassBaseUrl}interpreter", overpassContent, ct);
             if (overpassResponse.IsSuccessStatusCode)
             {
@@ -154,119 +147,9 @@ public class OsmService : IOsmService
         {
             _logger.LogWarning(ex, "Error while fetching from Overpass API for {City}.", cityName);
         }
-
-        // fallback to otm
-        try
-        {
-            _logger.LogInformation("Falling back to OpenTripMap API for {City} at ({Lat}, {Lon})", cityName, latStr, lonStr);
-            var otmUrl = $"{_otmOptions.BaseUrl}radius?radius=20000&lon={lonStr}&lat={latStr}&kinds=interesting_places&apikey={_otmOptions.ApiKey}&limit={limit * 2}";
-            
-            var otmResponse = await _httpClient.GetAsync(otmUrl, ct);
-            if (otmResponse.IsSuccessStatusCode)
-            {
-                var otmDataStr = await otmResponse.Content.ReadAsStringAsync(ct);
-                var attractions = ParseOpenTripMapResponse(otmDataStr, limit, cityName);
-                if (attractions.Count > 0)
-                {
-                    _logger.LogInformation("Successfully fetched {Count} POIs from OpenTripMap API for {City}", attractions.Count, cityName);
-                    return Result.Success(attractions);
-                }
-                _logger.LogWarning("OpenTripMap API returned 0 attractions for {City}.", cityName);
-            }
-            else
-            {
-                _logger.LogWarning("OpenTripMap API returned non-success status code: {Status}", otmResponse.StatusCode);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Error while fetching from OpenTripMap API for {City}.", cityName);
-        }
-
-        _logger.LogError("All POI services failed to fetch attractions for {City}. Returning empty attractions list to proceed with LLM-based planning.", cityName);
+ 
+        _logger.LogError("Overpass API failed or returned empty for {City}. Returning empty attractions list to proceed with Lonely Planet web source.", cityName);
         return Result.Success(new List<OsmAttractionDto>());
-    }
-
-    private List<OsmAttractionDto> ParseOpenTripMapResponse(string json, int limit, string cityName)
-    {
-        var attractions = new List<OsmAttractionDto>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        using var doc = JsonDocument.Parse(json);
-        if (!doc.RootElement.TryGetProperty("features", out var features))
-        {
-            return attractions;
-        }
-
-        foreach (var feature in features.EnumerateArray())
-        {
-            if (!feature.TryGetProperty("properties", out var properties) || 
-                !feature.TryGetProperty("geometry", out var geometry))
-            {
-                continue;
-            }
-
-            // Get Name
-            if (!properties.TryGetProperty("name", out var nameProp) || string.IsNullOrEmpty(nameProp.GetString()))
-            {
-                continue;
-            }
-            var name = nameProp.GetString()!;
-
-            if (name.Length < 3 || seen.Contains(name))
-            {
-                continue;
-            }
-
-            seen.Add(name);
-
-            // Get Coordinates from geometry.coordinates [lon, lat]
-            double lat = 0;
-            double lon = 0;
-            if (geometry.TryGetProperty("coordinates", out var coordinatesProp) && coordinatesProp.GetArrayLength() >= 2)
-            {
-                lon = coordinatesProp[0].GetDouble();
-                lat = coordinatesProp[1].GetDouble();
-            }
-
-            // Get Wikidata and other properties
-            var wikidata = properties.TryGetProperty("wikidata", out var wd) ? wd.GetString() : null;
-
-            // Get Rate
-            int rate = properties.TryGetProperty("rate", out var rProp) ? rProp.GetInt32() : 1;
-
-            // Determine Score based on rate (OpenTripMap rate is 1-3, map to 1-10 scale)
-            int score = rate * 3; 
-            if (!string.IsNullOrEmpty(wikidata)) score += 2;
-
-            // Determine Category from kinds string
-            var kinds = properties.TryGetProperty("kinds", out var kProp) ? kProp.GetString() ?? "" : "";
-            var category = "Attraction";
-
-            if (kinds.Contains("museums", StringComparison.OrdinalIgnoreCase)) category = "Museum";
-            else if (kinds.Contains("monuments", StringComparison.OrdinalIgnoreCase)) category = "Monument";
-            else if (kinds.Contains("castles", StringComparison.OrdinalIgnoreCase)) category = "Castle";
-            else if (kinds.Contains("churches", StringComparison.OrdinalIgnoreCase) || kinds.Contains("cathedrals", StringComparison.OrdinalIgnoreCase) || kinds.Contains("religion", StringComparison.OrdinalIgnoreCase)) category = "Cathedral";
-            else if (kinds.Contains("viewpoints", StringComparison.OrdinalIgnoreCase)) category = "Viewpoint";
-            else if (kinds.Contains("historic", StringComparison.OrdinalIgnoreCase)) category = "Historic Site";
-            else if (kinds.Contains("architecture", StringComparison.OrdinalIgnoreCase)) category = "Architecture";
-
-            var googleMapsLink = $"https://www.google.com/maps/search/?api=1&query={lat.ToString(System.Globalization.CultureInfo.InvariantCulture)},{lon.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
-
-            attractions.Add(new OsmAttractionDto
-            {
-                Name = name,
-                City = cityName,
-                Category = category,
-                Score = score,
-                GoogleMapsLink = googleMapsLink,
-                Website = null,
-                Wikipedia = null,
-                Wikidata = wikidata
-            });
-        }
-
-        return attractions.OrderByDescending(a => a.Score).Take(limit).ToList();
     }
 
     private List<OsmAttractionDto> ParseOverpassResponse(string json, int limit, string cityName)

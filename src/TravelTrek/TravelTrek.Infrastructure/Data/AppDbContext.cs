@@ -17,6 +17,8 @@ namespace TravelTrek.Infrastructure.Data
         public DbSet<DayPlan> DayPlans => Set<DayPlan>();
         public DbSet<Activity> Activities => Set<Activity>();
         public DbSet<SharedTripToken> SharedTripTokens => Set<SharedTripToken>();
+        public DbSet<Expense> Expenses => Set<Expense>();
+        
 
         public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
         {

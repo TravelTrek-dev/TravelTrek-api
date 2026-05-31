@@ -11,6 +11,12 @@ public class TripPlanConfiguration : IEntityTypeConfiguration<TripPlan>
     {
         builder.HasKey(t => t.Id);
 
+        builder.Property(t => t.Budget)
+            .HasColumnType("decimal(18,2)");
+
+        builder.Property(t => t.Currency)
+            .HasMaxLength(10);
+
         builder.OwnsOne(t => t.Weather, weatherBuilder =>
         {
             weatherBuilder.ToJson();
@@ -56,5 +62,33 @@ public class ActivityConfiguration : IEntityTypeConfiguration<Activity>
     {
         builder.HasKey(a => a.Id);
         builder.Property(a => a.Name).IsRequired().HasMaxLength(255);
+    }
+}
+
+public class ExpenseConfiguration : IEntityTypeConfiguration<Expense>
+{
+    public void Configure(EntityTypeBuilder<Expense> builder)
+    {
+        builder.HasKey(e => e.Id);
+
+        builder.Property(e => e.Name)
+            .IsRequired()
+            .HasMaxLength(255);
+
+        builder.Property(e => e.Description)
+            .HasMaxLength(1000);
+
+        builder.Property(e => e.Price)
+            .HasColumnType("decimal(18,2)");
+
+        builder.HasOne(e => e.TripPlan)
+            .WithMany()
+            .HasForeignKey(e => e.TripPlanId)
+            .OnDelete(DeleteBehavior.Cascade);
+        
+        builder.HasOne(e => e.User)
+            .WithMany()
+            .HasForeignKey(e => e.UserId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

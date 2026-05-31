@@ -6,7 +6,8 @@ public class TripPlan
     public Guid UserId { get; set; } // fk
     public string City { get; set; } = string.Empty;
     public string? Country { get; set; }
-    public string? Budget { get; set; }
+    public decimal? Budget { get; set; }
+    public string? Currency { get; set; }
     public string? GroupSize { get; set; }
     public WeatherSummary? Weather { get; set; }    
     public List<DayPlan> Days { get; set; } = new();
