@@ -26,7 +26,6 @@ public class TripPlanService : ITripPlanService
     private readonly IGenericRepository<SharedTripToken> _sharedTokenRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
-
     
     private const int MinPoisPerDay = 3;
     private const int DefaultPoiLimit = 12;
@@ -55,10 +54,26 @@ public class TripPlanService : ITripPlanService
     {
         var nerRequest = new NerRequest { Inputs = request.Prompt };
         var rawEntitiesResult = await _nerService.ExtractEntitiesAsync(nerRequest, ct);
+
         if (rawEntitiesResult.IsFailure)
         {
             _logger.LogWarning("NER extraction failed: {Error}", rawEntitiesResult.Error);
-            return Result.Failure<TripPlanResponse>(rawEntitiesResult.Error);
+            var promptOnlyContext = new TripContext { UserPrompt = request.Prompt, NerSucceeded = false};
+
+            var promptOnlyLlmResult = await _illmService.GenerateAsync(BuildGeneratePlanLlmPrompt(promptOnlyContext), ct);
+            if (promptOnlyLlmResult.IsFailure)
+            {
+                _logger.LogWarning("LLM generation failed: {Error}", promptOnlyLlmResult.Error);
+                return Result.Failure<TripPlanResponse>(promptOnlyLlmResult.Error);
+            }
+
+            var promptOnlyPlan = TryParseLlmResponse(promptOnlyLlmResult.Value);
+            if (promptOnlyPlan == null)
+            {
+                return Result.Failure<TripPlanResponse>(Error.External("TripPlan.ParseFailed", "Failed to parse the generated itinerary. Please try again."));
+            }
+
+            return Result.Success(promptOnlyPlan);   
         }
 
         var rawEntities = rawEntitiesResult.Value;
@@ -85,14 +100,17 @@ public class TripPlanService : ITripPlanService
         var attractionsResults = await Task.WhenAll(osmTask);
         var weatherResults = await Task.WhenAll(weatherTask);
         
+        var attractions = attractionsResults.Where(result => result.IsSuccess).SelectMany(result => result.Value).ToList();
+        var weather = weatherResults.Where(w => w != null).ToList();
 
         var context = new TripContext
         {
             UserPrompt = request.Prompt,
             Cities = tripData.Locations,
             TripData = tripData,
-            Attractions = attractionsResults.Where(result => result.IsSuccess).SelectMany(result => result.Value).ToList(),
-            Weather = weatherResults.ToList()
+            Attractions = attractions.Count == 0 ? null : attractions,
+            Weather = weather.Count == 0 ? null : weather,
+            NerSucceeded = true
         };
 
         var llmResult = await _illmService.GenerateAsync(BuildGeneratePlanLlmPrompt(context), ct);
@@ -511,40 +529,40 @@ public class TripPlanService : ITripPlanService
     }
     
     private static ExtractedTripData ParseTripData(List<NerEntity> entities)
+    {
+        var data = new ExtractedTripData();
+        foreach (var entity in entities)
         {
-            var data = new ExtractedTripData();
-            foreach (var entity in entities)
+            var word = entity.Word.Trim();
+            if (string.IsNullOrWhiteSpace(word)) continue;
+
+            switch (entity.EntityGroup.ToUpperInvariant())
             {
-                var word = entity.Word.Trim();
-                if (string.IsNullOrWhiteSpace(word)) continue;
-    
-                switch (entity.EntityGroup.ToUpperInvariant())
-                {
-                    case "LOCATION":
-                        data.Locations.Add(word);
-                        break;
-                    case "DATE":
-                        data.Dates.Add(word);
-                        break;
-                    case "DURATION":
-                        data.Durations.Add(word);
-                        break;
-                    case "BUDGET":
-                        data.Budgets.Add(word);
-                        break;
-                    case "GROUP_SIZE":
-                        data.GroupSizes.Add(word);
-                        break;
-                    case "TRAVEL_TYPE":
-                        data.TravelTypes.Add(word);
-                        break;
-                    case "ACTIVITY":
-                        data.Activities.Add(word);
-                        break;
-                }
+                case "LOCATION":
+                    data.Locations.Add(word);
+                    break;
+                case "DATE":
+                    data.Dates.Add(word);
+                    break;
+                case "DURATION":
+                    data.Durations.Add(word);
+                    break;
+                case "BUDGET":
+                    data.Budgets.Add(word);
+                    break;
+                case "GROUP_SIZE":
+                    data.GroupSizes.Add(word);
+                    break;
+                case "TRAVEL_TYPE":
+                    data.TravelTypes.Add(word);
+                    break;
+                case "ACTIVITY":
+                    data.Activities.Add(word);
+                    break;
             }
-            return data;
         }
+        return data;
+    }
     
     private static string BuildGeneratePlanLlmPrompt(TripContext context)
     {
@@ -557,57 +575,76 @@ public class TripPlanService : ITripPlanService
         sb.AppendLine(context.UserPrompt);
         sb.AppendLine();
 
-        sb.AppendLine("=== EXTRACTED TRIP DETAILS ===");
-        sb.AppendLine($"- Destination: {string.Join(", ", context.Cities)}");
-        if (context.TripData.Durations.Count != 0)
-            sb.AppendLine($"- Duration: {string.Join(", ", context.TripData.Durations)}");
-        if (!string.IsNullOrWhiteSpace(context.TripData.Budgets.FirstOrDefault()))
-            sb.AppendLine($"- Budget: {context.TripData.Budgets[0]}");
-        if (!string.IsNullOrWhiteSpace(context.TripData.GroupSizes.FirstOrDefault()))
-            sb.AppendLine($"- Group size: {context.TripData.GroupSizes[0]}");
-        if (context.TripData.TravelTypes.Count > 0) sb.AppendLine($"- Travel type: {string.Join(", ", context.TripData.TravelTypes)}");
-        if (context.TripData.Activities.Count > 0) sb.AppendLine($"- Preferred activities: {string.Join(", ", context.TripData.Activities)}");
-        if (context.TripData.Dates.Count > 0) sb.AppendLine($"- Travel dates: {string.Join(", ", context.TripData.Dates)}");
-        sb.AppendLine();
-
-        if (context.Weather?.Count > 0)
+        if (!context.NerSucceeded)
         {
-            sb.AppendLine("=== WEATHER FORECAST ===");
-            for (int i = 0; i < Math.Min(context.Cities.Count, context.Weather.Count); i++)
-            {
-                var w = context.Weather[i];
-                if (w != null)
-                {
-                    sb.AppendLine($"- {context.Cities[i]}: {w.AvgTempCelsius}°C, {w.Condition}, Humidity: {w.AvgHumidity}%, Wind: {w.AvgWindSpeed} m/s");
-                }
-            }
-            sb.AppendLine("Use the weather information to suggest appropriate activities and packing tips.");
-            sb.AppendLine();
-        }
-
-        if (context.Attractions.Count > 0)
-        {
-            sb.AppendLine("=== AVAILABLE POINTS OF INTEREST ===");
-            sb.AppendLine($"You MUST include at least {MinPoisPerDay} of these POIs per day in your itinerary. Use the exact names and links provided.");
-            sb.AppendLine();
-
-            for (var i = 0; i < context.Attractions.Count; i++)
-            {
-                var a = context.Attractions[i];
-                sb.AppendLine($"{i + 1}. {a.Name} (City: {a.City}, Category: {a.Category})");
-                sb.AppendLine($"   Google Maps: {a.GoogleMapsLink}");
-                if (!string.IsNullOrWhiteSpace(a.Website))
-                    sb.AppendLine($"   Website: {a.Website}");
-            }
+            sb.AppendLine("No pre-extracted points of interest are available. You MUST fetch, search, and recommend top points of interest and attractions using: https://www.lonelyplanet.com/");
+            sb.AppendLine("No weather data or forcast are available You MUST fetch, search for the cities forcast and weether using : https://www.meteoblue.com/");
             sb.AppendLine();
         }
         else
         {
-            sb.AppendLine("=== AVAILABLE POINTS OF INTEREST ===");
-            sb.AppendLine("No pre-extracted points of interest are available. You MUST fetch, search, and recommend top points of interest and attractions using: https://www.lonelyplanet.com/");
-            sb.AppendLine();
-        }
+            sb.AppendLine("=== EXTRACTED TRIP DETAILS ===");
 
+            if (context.Cities != null)
+                sb.AppendLine($"- Destination: {string.Join(", ", context.Cities)}");
+            if (context.TripData != null && context.TripData.Durations.Count != 0)
+                sb.AppendLine($"- Duration: {string.Join(", ", context.TripData.Durations)}");
+            if (context.TripData != null && !string.IsNullOrWhiteSpace(context.TripData.Budgets.FirstOrDefault()))
+                sb.AppendLine($"- Budget: {context.TripData.Budgets[0]}");
+            if (context.TripData != null && !string.IsNullOrWhiteSpace(context.TripData.GroupSizes.FirstOrDefault()))
+                sb.AppendLine($"- Group size: {context.TripData.GroupSizes[0]}");
+            if (context.TripData != null && context.TripData.TravelTypes.Count > 0)
+                sb.AppendLine($"- Travel type: {string.Join(", ", context.TripData.TravelTypes)}");
+            if (context.TripData != null && context.TripData.Activities.Count > 0)
+                sb.AppendLine($"- Preferred activities: {string.Join(", ", context.TripData.Activities)}");
+            if (context.TripData != null && context.TripData.Dates.Count > 0)
+                sb.AppendLine($"- Travel dates: {string.Join(", ", context.TripData.Dates)}");
+            sb.AppendLine();
+
+            sb.AppendLine("=== WEATHER FORECAST ===");
+            if (context.Weather != null)
+            {
+                if (context.Cities != null)
+                {
+                    for (int i = 0; i < Math.Min(context.Cities.Count, context.Weather.Count); i++)
+                    {
+                        var w = context.Weather[i];
+                        if (w != null)
+                            sb.AppendLine($"- {context.Cities[i]}: {w.AvgTempCelsius}°C, {w.Condition}, Humidity: {w.AvgHumidity}%, Wind: {w.AvgWindSpeed} m/s");
+                    }
+                }
+                sb.AppendLine("Use the weather information to suggest appropriate activities and packing tips.");
+            }
+            else
+            {
+                sb.AppendLine("No weather data or forecast are available You MUST fetch, search for the cities forecast and weather using : https://www.meteoblue.com/");
+            }
+
+            sb.AppendLine();
+
+
+            sb.AppendLine("=== AVAILABLE POINTS OF INTEREST ===");
+            sb.AppendLine($"You MUST include at least {MinPoisPerDay} of these POIs per day in your itinerary. Use the exact names and links provided.");
+            if (context.Attractions != null)
+            {
+                for (var i = 0; i < context.Attractions.Count; i++)
+                {
+                    var a = context.Attractions[i];
+                    sb.AppendLine($"{i + 1}. {a.Name} (City: {a.City}, Category: {a.Category})");
+                    sb.AppendLine($"   Google Maps: {a.GoogleMapsLink}");
+                    if (!string.IsNullOrWhiteSpace(a.Website))
+                        sb.AppendLine($"   Website: {a.Website}");
+                }
+
+                sb.AppendLine("If the available points of interest, You MUST fetch the remaining from https://www.lonelyplanet.com/");
+            }
+            else
+            {
+                sb.AppendLine("No pre-extracted points of interest are available. You MUST fetch, search, and recommend top points of interest and attractions using: https://www.lonelyplanet.com/");
+            }
+            sb.AppendLine();
+            
+        }
         sb.AppendLine("=== OUTPUT FORMAT ===");
         sb.AppendLine("Return ONLY valid JSON (no markdown, no explanation) with this exact structure:");
         sb.AppendLine(@"{
@@ -724,11 +761,11 @@ public class TripPlanService : ITripPlanService
 
     private static void PatchMissingFields(TripPlanResponse plan, TripContext context)
     {
-        if (string.IsNullOrWhiteSpace(plan.City)) plan.City = string.Join(", ", context.Cities);
-        if (string.IsNullOrWhiteSpace(plan.Duration)) plan.Duration = context.TripData.Durations.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(plan.City) && context.Cities != null) plan.City = string.Join(", ", context.Cities);
+        if (string.IsNullOrWhiteSpace(plan.Duration) && context.TripData != null) plan.Duration = context.TripData.Durations.FirstOrDefault();
         if (plan.Budget == null || plan.Budget == 0) plan.Budget = 2000m;
         if (string.IsNullOrWhiteSpace(plan.Currency)) plan.Currency = "USD";
-        if (string.IsNullOrWhiteSpace(plan.GroupSize)) plan.GroupSize = context.TripData.GroupSizes.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(plan.GroupSize) && context.TripData != null) plan.GroupSize = context.TripData.GroupSizes.FirstOrDefault();
         
         if (context.Weather != null)
         {
@@ -739,10 +776,11 @@ public class TripPlanService : ITripPlanService
     private sealed class TripContext
     {
         public required string UserPrompt { get; init; }
-        public required List<string> Cities { get; init; }
-        public required ExtractedTripData TripData { get; init; }
-        public required List<OsmAttractionDto> Attractions { get; init; }
+        public List<string>? Cities { get; init; }
+        public ExtractedTripData? TripData { get; init; }
+        public List<OsmAttractionDto>? Attractions { get; init; }
         public List<WeatherSummaryDto?>? Weather { get; init; }
+        public bool NerSucceeded { get; set; }
     }
 
     #endregion

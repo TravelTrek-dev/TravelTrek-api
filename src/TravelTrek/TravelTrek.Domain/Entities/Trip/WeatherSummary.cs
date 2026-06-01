@@ -1,6 +1,5 @@
 namespace TravelTrek.Domain.Entities.Trip;
 
-// mapped as json
 public class WeatherSummary
 {
     public double AvgTempCelsius { get; set; }

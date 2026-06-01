@@ -9,13 +9,11 @@ namespace TravelTrek.Application.Mappings
     {
         public TripPlanProfile()
         {
-            // Map from DTO -> Entity (for saving)
             CreateMap<SaveTripPlanRequest, TripPlan>()
                 .ForMember(dest => dest.Id, opt => opt.Ignore())
                 .ForMember(dest => dest.UserId, opt => opt.Ignore())
                 .ForMember(dest => dest.User, opt => opt.Ignore());
 
-            // Also keep TripPlanResponse -> TripPlan for internal LLM parsing use
             CreateMap<TripPlanResponse, TripPlan>()
                 .ForMember(dest => dest.Id, opt => opt.Ignore())
                 .ForMember(dest => dest.UserId, opt => opt.Ignore())
@@ -34,7 +32,6 @@ namespace TravelTrek.Application.Mappings
             CreateMap<WeatherSummaryDto, WeatherSummary>();
             CreateMap<MealPlanDto, MealPlan>().ReverseMap();
             
-            // Map from Entity -> DTO (for reading/retrieving)
             CreateMap<TripPlan, TripPlanResponse>();
             CreateMap<DayPlan, DayPlanDto>();
             CreateMap<Activity, ActivityDto>();

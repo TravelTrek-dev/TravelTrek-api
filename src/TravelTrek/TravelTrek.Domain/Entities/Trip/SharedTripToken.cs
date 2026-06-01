@@ -9,9 +9,7 @@ public class SharedTripToken
     public DateTime? ExpiresAt { get; set; }
     public bool IsRevoked { get; set; }
 
-    // Computed — not mapped to DB
     public bool IsActive => !IsRevoked && (ExpiresAt == null || ExpiresAt > DateTime.UtcNow);
 
-    // Navigation
     public TripPlan TripPlan { get; set; } = null!;
 }

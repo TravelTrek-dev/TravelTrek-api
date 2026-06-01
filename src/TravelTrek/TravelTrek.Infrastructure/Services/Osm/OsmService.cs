@@ -1,6 +1,4 @@
-using System.Net.Http.Json;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TravelTrek.Application.DTOs.Osm;
@@ -148,8 +146,8 @@ public class OsmService : IOsmService
             _logger.LogWarning(ex, "Error while fetching from Overpass API for {City}.", cityName);
         }
  
-        _logger.LogError("Overpass API failed or returned empty for {City}. Returning empty attractions list to proceed with Lonely Planet web source.", cityName);
-        return Result.Success(new List<OsmAttractionDto>());
+        _logger.LogError("Overpass API failed or returned empty for {City}.", cityName);
+        return Result.Failure<List<OsmAttractionDto>>(Error.External("GetTopAttractions.External", "Failed to fetch pois from Overpass API"));
     }
 
     private List<OsmAttractionDto> ParseOverpassResponse(string json, int limit, string cityName)

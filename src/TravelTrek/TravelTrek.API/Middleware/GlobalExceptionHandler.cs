@@ -25,15 +25,13 @@ namespace TravelTrek.API.Middleware
         {
             _logger.LogError(exception, "Unhandled exception. TraceId: {TraceId}", httpContext.TraceIdentifier);
 
-            // Map exception to Error (Result Pattern)
             var error = exception switch
             {
                 ArgumentNullException => Error.Validation("Validation.ArgumentNull", "Required argument was null"),
                 ArgumentException => Error.Validation("Validation.ArgumentInvalid", exception.Message),
                 KeyNotFoundException => Error.NotFound("Resource.NotFound", exception.Message),
                 UnauthorizedAccessException => Error.Unauthorized("Auth.Unauthorized", "Not authorized"),
-                // Note: InvalidOperationException is intentionally mapped to Internal (500), NOT Conflict (409).
-                // It's thrown by EF Core, Identity, Result.Value on failure, etc. — not a client conflict.
+                
                 _ => Error.Internal("Internal.Error", _env.IsDevelopment() ? exception.Message : "An unexpected error occurred")
             };
 
@@ -63,7 +61,7 @@ namespace TravelTrek.API.Middleware
 
             await httpContext.Response.WriteAsJsonAsync(response, cancellationToken);
 
-            return true; // true = exception was handled, don't rethrow
+            return true; 
         }
     }
 }

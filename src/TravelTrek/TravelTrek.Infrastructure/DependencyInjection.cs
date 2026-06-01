@@ -28,9 +28,7 @@ namespace TravelTrek.Infrastructure
 {
     public static class DependencyInjection
     {
-        public static IServiceCollection AddInfrastructureServices(
-            this IServiceCollection services,
-            IConfiguration configuration)
+        public static IServiceCollection AddInfrastructureServices(this IServiceCollection services, IConfiguration configuration)
         {
             #region Database
 
@@ -128,7 +126,6 @@ namespace TravelTrek.Infrastructure
 
             #endregion
 
-
             #region OpenWeather
 
             // OpenWeather API
@@ -137,11 +134,10 @@ namespace TravelTrek.Infrastructure
                 .ValidateDataAnnotations();
 
             services.AddHttpClient<IOpenWeatherService, OpenWeatherService>(client =>
-                {
-                    client.BaseAddress = new Uri(configuration[$"{OpenWeatherApiOptions.SectionName}:BaseUrl"]!);
-                    client.Timeout = TimeSpan.FromSeconds(15);
-                })
-                .AddStandardResilienceHandler();
+            {
+                client.BaseAddress = new Uri(configuration[$"{OpenWeatherApiOptions.SectionName}:BaseUrl"]!);
+                client.Timeout = TimeSpan.FromSeconds(15);
+            });
 
             #endregion
 
@@ -167,11 +163,11 @@ namespace TravelTrek.Infrastructure
                 .ValidateDataAnnotations();
 
             services.AddHttpClient<IOsmService, OsmService>(client =>
-                {
-                    client.DefaultRequestHeaders.Add("User-Agent", "TravelApp/1.0 (educational project)");
-                    client.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.9");
-                    client.Timeout = TimeSpan.FromSeconds(120);
-                });
+            {
+                client.DefaultRequestHeaders.Add("User-Agent", "TravelApp/1.0 (educational project)");
+                client.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.9");
+                client.Timeout = TimeSpan.FromSeconds(15);
+            });
 
             #endregion
 

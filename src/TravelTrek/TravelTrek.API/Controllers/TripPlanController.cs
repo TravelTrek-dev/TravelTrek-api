@@ -18,18 +18,24 @@ namespace TravelTrek.API.Controllers
         }
         
         
+        /// <summary>
+        /// Generates a new AI travel plan based on user preferences.
+        /// </summary>
         [Authorize]
         [EnableRateLimiting("trip-generate")]
-        [HttpPost("generate")]
+        [HttpPost("generate", Name = "GenerateTripPlan")]
         public async Task<IActionResult> GenerateTripPlan([FromBody] TripPlanRequest request, CancellationToken ct)
         {
             var result = await _tripPlanService.GenerateTripPlanAsync(request, ct);
             return ToActionResult(result);
         }
 
+        /// <summary>
+        /// Saves a newly generated trip plan to the user's account.
+        /// </summary>
         [Authorize]
         [EnableRateLimiting("trip-db")]
-        [HttpPost("save-created")]
+        [HttpPost("save-created", Name = "SaveCreatedTripPlan")]
         public async Task<IActionResult> SaveCreatedTripPlan([FromBody] SaveTripPlanRequest request, CancellationToken ct)
         {
             var userId = GetUserId();
@@ -39,9 +45,12 @@ namespace TravelTrek.API.Controllers
             return ToCreatedResult(result);
         }
 
+        /// <summary>
+        /// Updates an existing trip plan's details.
+        /// </summary>
         [Authorize]
         [EnableRateLimiting("trip-db")]
-        [HttpPut("{id}")]
+        [HttpPut("{id}", Name = "UpdateTripPlan")]
         public async Task<IActionResult> UpdateTripPlan(Guid id, [FromBody] SaveTripPlanRequest request, CancellationToken ct)
         {
             var userId = GetUserId();
@@ -51,9 +60,12 @@ namespace TravelTrek.API.Controllers
             return ToActionResult(result);
         }
 
+        /// <summary>
+        /// Deletes a specific trip plan by ID.
+        /// </summary>
         [Authorize]
         [EnableRateLimiting("trip-db")]
-        [HttpDelete("{id}")]
+        [HttpDelete("{id}", Name = "DeleteTripPlan")]
         public async Task<IActionResult> DeleteTripPlan(Guid id, CancellationToken ct)
         {
             var userId = GetUserId();
@@ -63,9 +75,12 @@ namespace TravelTrek.API.Controllers
             return ToActionResult(result);
         }
 
+        /// <summary>
+        /// Retrieves a specific trip plan by ID.
+        /// </summary>
         [Authorize]
         [EnableRateLimiting("trip-db")]
-        [HttpGet("{id}")]
+        [HttpGet("{id}", Name = "GetTripPlan")]
         public async Task<IActionResult> GetTripPlan(Guid id)
         {
             var userId = GetUserId();
@@ -75,9 +90,12 @@ namespace TravelTrek.API.Controllers
             return ToActionResult(result);
         }
 
+        /// <summary>
+        /// Retrieves all trip plans belonging to the authenticated user.
+        /// </summary>
         [Authorize]
         [EnableRateLimiting("trip-db")]
-        [HttpGet]
+        [HttpGet(Name = "GetTripPlans")]
         public async Task<IActionResult> GetTripPlans()
         {
             var userId = GetUserId();
@@ -87,9 +105,12 @@ namespace TravelTrek.API.Controllers
             return ToActionResult(result);
         }
 
+        /// <summary>
+        /// Refines an existing trip plan using AI based on a new prompt or instruction.
+        /// </summary>
         [Authorize]
         [EnableRateLimiting("trip-generate")]
-        [HttpPost("refine/{id}")]
+        [HttpPost("refine/{id}", Name = "RefinePlan")]
         public async Task<IActionResult> RefinePlan(Guid id, [FromBody]RefinePlanRequest request, CancellationToken ct)
         {
             var userId = GetUserId();
@@ -99,9 +120,12 @@ namespace TravelTrek.API.Controllers
             return ToActionResult(result);
         }
 
+        /// <summary>
+        /// Saves a refined version of an existing trip plan.
+        /// </summary>
         [Authorize]
         [EnableRateLimiting("trip-db")]
-        [HttpPost("save-refined/{id}")]
+        [HttpPost("save-refined/{id}", Name = "SaveRefinedTripPlan")]
         public async Task<IActionResult> SaveRefinedTripPlan(Guid id, [FromBody] SaveTripPlanRequest request, CancellationToken ct)
         {
             var userId = GetUserId();
@@ -111,9 +135,12 @@ namespace TravelTrek.API.Controllers
             return ToCreatedResult(result);
         }
 
+        /// <summary>
+        /// Generates a public shareable token for a trip plan.
+        /// </summary>
         [Authorize]
         [EnableRateLimiting("trip-db")]
-        [HttpPost("{id}/share")]
+        [HttpPost("{id}/share", Name = "ShareTripPlan")]
         public async Task<IActionResult> ShareTripPlan(Guid id, CancellationToken ct)
         {
             var userId = GetUserId();
@@ -123,17 +150,23 @@ namespace TravelTrek.API.Controllers
             return ToActionResult(result);
         }
 
+        /// <summary>
+        /// Retrieves a public/shared trip plan using a shareable token.
+        /// </summary>
         [EnableRateLimiting("trip-db")]
-        [HttpGet("shared/{token}")]
+        [HttpGet("shared/{token}", Name = "GetSharedTripPlan")]
         public async Task<IActionResult> GetSharedTripPlan(string token, CancellationToken ct)
         {
             var result = await _tripPlanService.GetSharedTripPlanAsync(token, ct);
             return ToActionResult(result);
         }
 
+        /// <summary>
+        /// Clones a shared trip plan into the authenticated user's account.
+        /// </summary>
         [Authorize]
         [EnableRateLimiting("trip-db")]
-        [HttpPost("clone/{token}")]
+        [HttpPost("clone/{token}", Name = "CloneTripPlan")]
         public async Task<IActionResult> CloneTripPlan(string token, CancellationToken ct)
         {
             var userId = GetUserId();
@@ -143,8 +176,11 @@ namespace TravelTrek.API.Controllers
             return ToCreatedResult(result);
         }
 
+        /// <summary>
+        /// Adds a new expense entry to a specific trip plan.
+        /// </summary>
         [Authorize]
-        [HttpPost("expense/{tripId}")]
+        [HttpPost("expense/{tripId}", Name = "AddTripExpense")]
         public async Task<IActionResult> AddTripExpense([FromBody] CreateExpenseDto request, Guid tripId, CancellationToken ct)
         {
             var userId = GetUserId();
@@ -154,8 +190,11 @@ namespace TravelTrek.API.Controllers
             return ToCreatedResult(result);
         }
 
+        /// <summary>
+        /// Retrieves all expenses associated with a specific trip plan.
+        /// </summary>
         [Authorize]
-        [HttpGet("expense/{tripId}")]
+        [HttpGet("expense/{tripId}", Name = "GetTripExpenses")]
         public async Task<IActionResult> GetTripExpenses(Guid tripId, CancellationToken ct)
         {
             var userId = GetUserId();
@@ -165,8 +204,11 @@ namespace TravelTrek.API.Controllers
             return ToActionResult(result);
         }
 
+        /// <summary>
+        /// Updates details of an existing trip expense.
+        /// </summary>
         [Authorize]
-        [HttpPut("expense/{id}")]
+        [HttpPut("expense/{id}", Name = "UpdateTripExpense")]
         public async Task<IActionResult> UpdateTripExpense([FromBody] EditExpenseDto request, Guid id, CancellationToken ct)
         {
             var userId = GetUserId();
@@ -176,8 +218,11 @@ namespace TravelTrek.API.Controllers
             return ToActionResult(result);
         }
         
+        /// <summary>
+        /// Deletes a specific trip expense by ID.
+        /// </summary>
         [Authorize]
-        [HttpDelete("expense/{id}")]
+        [HttpDelete("expense/{id}", Name = "DeleteTripExpense")]
         public async Task<IActionResult> DeleteTripExpense(Guid id, CancellationToken ct)
         {
             var userId = GetUserId();
