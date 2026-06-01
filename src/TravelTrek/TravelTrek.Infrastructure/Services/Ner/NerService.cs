@@ -109,5 +109,14 @@ public class NerService : INerService
             _logger.LogWarning(ex, "Failed to parse Feasibility API response.");
             return Result.Failure<FeasibilityResult>(Error.Internal("NerApi.ParseError", "Failed to parse Feasibility API response."));
         }
+        catch (TaskCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (TaskCanceledException ex)
+        {
+            _logger.LogWarning(ex, "15 Second timeout, can´t extract entities");
+            return Result.Failure<FeasibilityResult>(Error.External("NerApi.Timeout", "Feasibility API reached timeout"));
+        }
     }
 }

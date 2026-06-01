@@ -1,7 +1,6 @@
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using AutoMapper;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using TravelTrek.Application.DTOs.Ner;
 using TravelTrek.Application.DTOs.Osm;
@@ -9,23 +8,19 @@ using TravelTrek.Application.DTOs.TripPlanner;
 using TravelTrek.Application.DTOs.Weather;
 using TravelTrek.Application.Interfaces;
 using TravelTrek.Domain.Common;
-using TravelTrek.Domain.Entities.Trip;
 using TravelTrek.Domain.Interfaces;
 
 namespace TravelTrek.Application.Services;
 
-public class TripPlanService : ITripPlanService
+public class TripGenerationService : ITripGenerationService
 {
     private readonly INerService _nerService;
     private readonly IOsmService _osmService;
     private readonly IOpenWeatherService _weatherService;
     private readonly ILLMService _illmService;
-    private readonly ILogger<TripPlanService> _logger;
+    private readonly ILogger<TripGenerationService> _logger;
     private readonly ITripPlanRepository _tripPlanRepository;
-    private readonly IExpenseRepository _expenseRepository;
-    private readonly IGenericRepository<SharedTripToken> _sharedTokenRepository;
-    private readonly IUnitOfWork _unitOfWork;
-    private readonly IMapper _mapper;
+    private readonly AutoMapper.IMapper _mapper;
     
     private const int MinPoisPerDay = 3;
     private const int DefaultPoiLimit = 12;
@@ -36,7 +31,7 @@ public class TripPlanService : ITripPlanService
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    public TripPlanService(INerService nerService, IOsmService osmService, IOpenWeatherService weatherService, ILLMService illmService, ILogger<TripPlanService> logger, ITripPlanRepository tripPlanRepository, IExpenseRepository expenseRepository, IGenericRepository<SharedTripToken> sharedTokenRepository, IUnitOfWork unitOfWork, IMapper mapper)
+    public TripGenerationService(INerService nerService, IOsmService osmService, IOpenWeatherService weatherService, ILLMService illmService, ILogger<TripGenerationService> logger, ITripPlanRepository tripPlanRepository, AutoMapper.IMapper mapper)
     {
         _nerService = nerService;
         _osmService = osmService;
@@ -44,9 +39,6 @@ public class TripPlanService : ITripPlanService
         _illmService = illmService;
         _logger = logger;
         _tripPlanRepository = tripPlanRepository;
-        _expenseRepository = expenseRepository;
-        _sharedTokenRepository = sharedTokenRepository;
-        _unitOfWork = unitOfWork;
         _mapper = mapper;
     }
 
@@ -70,7 +62,13 @@ public class TripPlanService : ITripPlanService
             var promptOnlyPlan = TryParseLlmResponse(promptOnlyLlmResult.Value);
             if (promptOnlyPlan == null)
             {
-                return Result.Failure<TripPlanResponse>(Error.External("TripPlan.ParseFailed", "Failed to parse the generated itinerary. Please try again."));
+                _logger.LogWarning("First LLM parse failed (NER-fallback), retrying...");
+                var retryResult = await _illmService.GenerateAsync(BuildGeneratePlanLlmPrompt(promptOnlyContext), ct);
+                if (retryResult.IsSuccess)
+                    promptOnlyPlan = TryParseLlmResponse(retryResult.Value);
+
+                if (promptOnlyPlan == null)
+                    return Result.Failure<TripPlanResponse>(Error.External("TripPlan.ParseFailed", "Failed to parse the generated itinerary after retry. Please try again."));
             }
 
             return Result.Success(promptOnlyPlan);   
@@ -94,11 +92,13 @@ public class TripPlanService : ITripPlanService
             tripData.Locations, tripData.Durations.FirstOrDefault() ?? "N/A", tripData.Budgets.FirstOrDefault() ?? "N/A", tripData.GroupSizes.FirstOrDefault() ?? "N/A");
         
         
-        var osmTask = tripData.Locations.Select(city => _osmService.GetTopAttractionsAsync(city, DefaultPoiLimit, ct));
-        var weatherTask = tripData.Locations.Select(city => GetWeatherForCityAsync(city, ct));
+        var osmTasks = tripData.Locations.Select(city => _osmService.GetTopAttractionsAsync(city, DefaultPoiLimit, ct)).ToList();
+        var weatherTasks = tripData.Locations.Select(city => GetWeatherForCityAsync(city, ct)).ToList();
         
-        var attractionsResults = await Task.WhenAll(osmTask);
-        var weatherResults = await Task.WhenAll(weatherTask);
+        await Task.WhenAll(osmTasks.Cast<Task>().Concat(weatherTasks));
+        
+        var attractionsResults = osmTasks.Select(t => t.Result).ToArray();
+        var weatherResults = weatherTasks.Select(t => t.Result).ToArray();
         
         var attractions = attractionsResults.Where(result => result.IsSuccess).SelectMany(result => result.Value).ToList();
         var weather = weatherResults.Where(w => w != null).ToList();
@@ -123,7 +123,13 @@ public class TripPlanService : ITripPlanService
         var plan = TryParseLlmResponse(llmResult.Value);
         if (plan == null)
         {
-            return Result.Failure<TripPlanResponse>(Error.External("TripPlan.ParseFailed", "Failed to parse the generated itinerary. Please try again."));
+            _logger.LogWarning("First LLM parse failed, retrying...");
+            var retryResult = await _illmService.GenerateAsync(BuildGeneratePlanLlmPrompt(context), ct);
+            if (retryResult.IsSuccess)
+                plan = TryParseLlmResponse(retryResult.Value);
+
+            if (plan == null)
+                return Result.Failure<TripPlanResponse>(Error.External("TripPlan.ParseFailed", "Failed to parse the generated itinerary after retry. Please try again."));
         }
 
         PatchMissingFields(plan, context);
@@ -156,320 +162,15 @@ public class TripPlanService : ITripPlanService
         var plan = TryParseLlmResponse(llmResult.Value);
         if (plan == null)
         {
-            return Result.Failure<TripPlanResponse>(Error.External("RefinePlan.ParseFailed", "Failed to parse the generated itinerary. Please try again."));
+            _logger.LogWarning("First LLM parse failed (refine), retrying...");
+            var retryResult = await _illmService.GenerateAsync(BuildRefinePlanLlmPrompt(tripPlanJson, request.UserPrompt), ct);
+            if (retryResult.IsSuccess)
+                plan = TryParseLlmResponse(retryResult.Value);
+
+            if (plan == null)
+                return Result.Failure<TripPlanResponse>(Error.External("RefinePlan.ParseFailed", "Failed to parse the refined itinerary after retry. Please try again."));
         }
         return Result.Success(plan);
-    }
-    
-    public async Task<Result<Guid>> SaveRefinedTripPlanAsync(Guid tripId, SaveTripPlanRequest updatedPlanDto, Guid userId, CancellationToken ct = default)
-    {
-        var existingTrip = await _tripPlanRepository.GetTripPlanWithDetailsAsync(tripId);
-        if (existingTrip == null)
-        {
-            return Result.Failure<Guid>(Error.NotFound("SaveRefinedPlan.NotFound", "The trip could not be found."));
-        }
-
-        if (existingTrip.UserId != userId)
-        {
-            return Result.Failure<Guid>(Error.Forbidden("SaveRefinedPlan.Forbidden", "You do not have permission to edit this trip."));
-        }
-
-        _mapper.Map(updatedPlanDto, existingTrip);
-        
-        _tripPlanRepository.Update(existingTrip);
-        await _unitOfWork.SaveChangesAsync();
-
-        return Result.Success(existingTrip.Id);
-    }
-
-    public async Task<Result<Guid>> SaveCreatedTripPlanAsync(SaveTripPlanRequest planDto, Guid userId, CancellationToken ct = default)
-    {
-        var tripPlan = _mapper.Map<TripPlan>(planDto);
-        tripPlan.UserId = userId;
-        await _tripPlanRepository.AddAsync(tripPlan);
-        await _unitOfWork.SaveChangesAsync();
-
-        return Result.Success(tripPlan.Id);
-    }
-    
-    public async Task<Result> UpdateTripPlanAsync(Guid tripId, SaveTripPlanRequest updatedPlanDto, Guid userId, CancellationToken ct = default)
-    {
-        var existingTrip = await _tripPlanRepository.GetTripPlanWithDetailsAsync(tripId);
-        if (existingTrip == null)
-        {
-            return Result.Failure(Error.NotFound("TripPlan.NotFound", "The trip could not be found."));
-        }
-
-        if (existingTrip.UserId != userId)
-        {
-            return Result.Failure(Error.Forbidden("TripPlan.Forbidden", "You do not have permission to edit this trip."));
-        }
-
-        _mapper.Map(updatedPlanDto, existingTrip);
-
-        _tripPlanRepository.Update(existingTrip);
-        await _unitOfWork.SaveChangesAsync();
-
-        return Result.Success();
-    }
-
-    public async Task<Result> DeleteTripPlanAsync(Guid tripId, Guid userId, CancellationToken ct = default)
-    {
-        var trip = await _tripPlanRepository.GetByIdAsync(tripId);
-        if (trip == null)
-        {
-            return Result.Failure(Error.NotFound("TripPlan.NotFound", "The trip could not be found."));
-        }
-
-        if (trip.UserId != userId)
-        {
-            return Result.Failure(Error.Forbidden("TripPlan.Forbidden", "You do not have permission to delete this trip."));
-        }
-
-        _tripPlanRepository.Delete(trip);
-        await _unitOfWork.SaveChangesAsync();
-
-        return Result.Success();
-    }
-
-    public async Task<Result<TripPlanResponse>> GetTripPlanAsync(Guid id, Guid userId)
-    {
-        var tripPlan = await _tripPlanRepository.GetTripPlanWithDetailsAsync(id);
-        if (tripPlan == null)
-        {
-            return Result.Failure<TripPlanResponse>(Error.NotFound("GetTripPlan.NotFound", "Trip Plan Not Found"));
-        }
-
-        if (tripPlan.UserId != userId)
-        {
-            return Result.Failure<TripPlanResponse>(Error.Forbidden("GetTripPlan.Forbidden", "Forbidden Request"));
-        }
-
-        var tripPlanDto = _mapper.Map<TripPlanResponse>(tripPlan);
-        return Result.Success(tripPlanDto);
-    }
-
-    public async Task<Result<IEnumerable<TripPlanResponse>>> GetTripPlansAsync(Guid userId)
-    {
-        var tripPlans = await _tripPlanRepository.GetUserTripPlansAsync(userId);
-
-        var tripPlansDto = _mapper.Map<IEnumerable<TripPlanResponse>>(tripPlans);
-        return Result.Success(tripPlansDto);
-    }
-    
-    public async Task<Result<ShareTripResponse>> ShareTripPlanAsync(Guid tripId, Guid userId, CancellationToken ct = default)
-    {
-        var trip = await _tripPlanRepository.GetByIdAsync(tripId);
-        if (trip == null)
-            return Result.Failure<ShareTripResponse>(Error.NotFound("TripPlan.NotFound", "The trip could not be found."));
-
-        if (trip.UserId != userId)
-            return Result.Failure<ShareTripResponse>(Error.Forbidden("TripPlan.Forbidden", "You do not have permission to share this trip."));
-
-        // Check if an active share token already exists
-        var existingToken = await _sharedTokenRepository.FindFirstOrDefaultAsync(
-            t => t.TripPlanId == tripId && !t.IsRevoked && (t.ExpiresAt == null || t.ExpiresAt > DateTime.UtcNow));
-
-        if (existingToken != null)
-        {
-            return Result.Success(new ShareTripResponse(existingToken.Token, existingToken.ExpiresAt));
-        }
-
-        // Generate a new cryptographic URL-safe token
-        var tokenBytes = RandomNumberGenerator.GetBytes(16);
-        var token = Convert.ToBase64String(tokenBytes)
-            .Replace("+", "-")
-            .Replace("/", "_")
-            .TrimEnd('=');
-
-        var sharedToken = new SharedTripToken
-        {
-            Id = Guid.NewGuid(),
-            TripPlanId = tripId,
-            Token = token,
-            CreatedAt = DateTime.UtcNow,
-            ExpiresAt = null // Never expires by default
-        };
-
-        await _sharedTokenRepository.AddAsync(sharedToken);
-        await _unitOfWork.SaveChangesAsync();
-
-        _logger.LogInformation("Share token generated for TripPlan {TripPlanId} by User {UserId}.", tripId, userId);
-
-        return Result.Success(new ShareTripResponse(sharedToken.Token, sharedToken.ExpiresAt));
-    }
-
-    public async Task<Result<TripPlanResponse>> GetSharedTripPlanAsync(string token, CancellationToken ct = default)
-    {
-        var sharedToken = await _sharedTokenRepository.FindFirstOrDefaultAsync(
-            t => t.Token == token);
-
-        if (sharedToken == null)
-            return Result.Failure<TripPlanResponse>(Error.NotFound("SharedTrip.NotFound", "Shared trip not found."));
-
-        if (!sharedToken.IsActive)
-            return Result.Failure<TripPlanResponse>(Error.Forbidden("SharedTrip.Inactive", "This share link is no longer active."));
-
-        var tripPlan = await _tripPlanRepository.GetTripPlanWithDetailsAsync(sharedToken.TripPlanId);
-        if (tripPlan == null)
-            return Result.Failure<TripPlanResponse>(Error.NotFound("SharedTrip.TripNotFound", "The shared trip no longer exists."));
-
-        var tripPlanDto = _mapper.Map<TripPlanResponse>(tripPlan);
-        return Result.Success(tripPlanDto);
-    }
-
-    public async Task<Result<Guid>> CloneTripPlanAsync(string token, Guid userId, CancellationToken ct = default)
-    {
-        var sharedToken = await _sharedTokenRepository.FindFirstOrDefaultAsync(
-            t => t.Token == token);
-
-        if (sharedToken == null)
-            return Result.Failure<Guid>(Error.NotFound("CloneTrip.NotFound", "Shared trip not found."));
-
-        if (!sharedToken.IsActive)
-            return Result.Failure<Guid>(Error.Forbidden("CloneTrip.Inactive", "This share link is no longer active."));
-
-        var sourcePlan = await _tripPlanRepository.GetTripPlanWithDetailsAsync(sharedToken.TripPlanId);
-        if (sourcePlan == null)
-            return Result.Failure<Guid>(Error.NotFound("CloneTrip.TripNotFound", "The shared trip no longer exists."));
-
-        // Deep copy — create a completely independent TripPlan for the new user
-        var clonedPlan = new TripPlan
-        {
-            Id = Guid.NewGuid(),
-            UserId = userId,
-            City = sourcePlan.City,
-            Country = sourcePlan.Country,
-            Budget = sourcePlan.Budget,
-            GroupSize = sourcePlan.GroupSize,
-            GeneralAdvice = sourcePlan.GeneralAdvice,
-            PackingTips = sourcePlan.PackingTips != null ? new List<string>(sourcePlan.PackingTips) : null,
-            Weather = sourcePlan.Weather != null
-                ? new WeatherSummary
-                {
-                    AvgTempCelsius = sourcePlan.Weather.AvgTempCelsius,
-                    Condition = sourcePlan.Weather.Condition,
-                    AvgHumidity = sourcePlan.Weather.AvgHumidity,
-                    AvgWindSpeed = sourcePlan.Weather.AvgWindSpeed
-                }
-                : null,
-            Days = sourcePlan.Days.Select(day => new DayPlan
-            {
-                Id = Guid.NewGuid(),
-                DayNumber = day.DayNumber,
-                Activities = day.Activities.Select(a => new Activity
-                {
-                    Id = Guid.NewGuid(),
-                    Name = a.Name,
-                    City = a.City,
-                    Description = a.Description,
-                    GoogleMapsLink = a.GoogleMapsLink,
-                    Website = a.Website
-                }).ToList()
-            }).ToList()
-        };
-
-        await _tripPlanRepository.AddAsync(clonedPlan);
-        await _unitOfWork.SaveChangesAsync();
-
-        _logger.LogInformation("TripPlan {SourceId} cloned to {ClonedId} by User {UserId} via token.", sourcePlan.Id, clonedPlan.Id, userId);
-
-        return Result.Success(clonedPlan.Id);
-    }
-
-    public async Task<Result<Guid>> AddTripExpenseAsync(CreateExpenseDto request, Guid tripPlanId, Guid userId, CancellationToken ct = default)
-    {
-        var tripPlan = await _tripPlanRepository.GetByIdAsync(tripPlanId);
-        if (tripPlan == null)
-        {
-            return Result.Failure<Guid>(Error.NotFound("AddTripExpense.NotFound", "Trip does not exist"));
-        }
-
-        if (tripPlan.UserId != userId)
-        {
-            return Result.Failure<Guid>(Error.Forbidden("AddTripExpense.Forbidden", "Forbidden request"));
-        }
-        
-        var newExpense = new Expense()
-        {
-            TripPlanId = tripPlanId,
-            UserId = userId
-        };
-
-        _mapper.Map(request, newExpense);
-
-        await _expenseRepository.AddAsync(newExpense);
-        await _unitOfWork.SaveChangesAsync();
-
-        return Result.Success(newExpense.Id);
-    }
-    
-    public async Task<Result> EditTripExpenseAsync(EditExpenseDto request, Guid id, Guid userId, CancellationToken ct = default)
-    {
-        var expense = await _expenseRepository.GetByIdAsync(id);
-        if (expense == null)
-        {
-            return Result.Failure(Error.NotFound("EditTripExpense.NotFound", "Expense does not exist"));
-        }
-        if (expense.UserId != userId)
-        {
-            return Result.Failure(Error.Forbidden("EditTripExpense.Forbidden", "Forbidden request"));
-        }
-
-        _mapper.Map(request, expense);
-
-        _expenseRepository.Update(expense);
-        await _unitOfWork.SaveChangesAsync();
-
-        return Result.Success();
-    }
-
-    public async Task<Result> DeleteTripExpenseAsync(Guid id, Guid userId, CancellationToken ct = default)
-    {
-        var expense = await _expenseRepository.GetByIdAsync(id);
-        if (expense == null)
-        {
-            return Result.Failure(Error.NotFound("DeleteTripExpense.NotFound", "Expense does not exist"));
-        }
-        if (expense.UserId != userId)
-        {
-            return Result.Failure(Error.Forbidden("DeleteTripExpense.Forbidden", "Forbidden request"));
-        }
-        
-        _expenseRepository.Delete(expense);
-        await _unitOfWork.SaveChangesAsync();
-
-        return Result.Success();
-    }
-    
-    public async Task<Result<ExpensesDto>> GetTripExpensesAsync(Guid tripPlanId, Guid userId, CancellationToken ct = default)
-    {
-        var tripPlan = await _tripPlanRepository.GetByIdAsync(tripPlanId);
-        if (tripPlan == null)
-        {
-            return Result.Failure<ExpensesDto>(Error.NotFound("GetTripExpenses.NotFound", "Trip does not exist"));
-        }
-
-        if (tripPlan.UserId != userId)
-        {
-            return Result.Failure<ExpensesDto>(Error.Forbidden("GetTripExpenses.Forbidden", "Forbidden request"));
-        }
-        var expenses = await _expenseRepository.GetForTrip(tripPlanId);
-
-        var spent = expenses.Sum(e => e.Price);
-        var remaining = tripPlan.Budget - spent;
-        var remainingValue = remaining ?? 0m;
-        var expensesDto = new ExpensesDto()
-        {
-            City = tripPlan.City,
-            Expenses = _mapper.Map<List<ExpenseDto>>(expenses),
-            Budget = tripPlan.Budget ?? 0m,
-            Spent  = spent,
-            Remaining = remainingValue > 0 ? remainingValue : 0m,
-            Currency = tripPlan.Currency ?? ""
-        };
-
-        return Result.Success(expensesDto);
     }
 
     #region Helpers
@@ -488,6 +189,10 @@ public class TripPlanService : ITripPlanService
             var coords = new WeatherRequest(geocodeResult.Value.Lat, geocodeResult.Value.Lon);
 
             var forecastResult = await _weatherService.GetForecastAsync(coords, ct);
+            if (forecastResult.IsFailure)
+            {
+                return null;
+            }
             var forecast = forecastResult.Value;
             if (forecastResult.IsSuccess && forecastResult.Value.Items.Count > 0)
             {
@@ -704,28 +409,52 @@ public class TripPlanService : ITripPlanService
     private static string BuildRefinePlanLlmPrompt(string tripPlan, string userPrompt)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("You are an expert travel editor. I will provide you with a current JSON travel itinerary and a specific user instruction on how to change it.");
+        sb.AppendLine("You are an expert travel editor. Your ONLY job is to refine an existing JSON travel itinerary based on specific user instructions.");
         sb.AppendLine();
         
-        sb.AppendLine("=== current JSON travel itinerary ===");
+        sb.AppendLine("=== CRITICAL VALIDATION ===");
+        sb.AppendLine("BEFORE proceeding, validate that the user instruction is a REFINEMENT request, NOT a request for a NEW trip plan.");
+        sb.AppendLine("REFINEMENT means: modifying, adjusting, replacing, or removing existing activities/dates/details from this specific trip.");
+        sb.AppendLine("NEW TRIP means: creating an entirely different trip, planning a new destination, or starting from scratch.");
+        sb.AppendLine();
+        sb.AppendLine("If the user is asking for a NEW trip plan instead of refining THIS trip, REFUSE and respond ONLY with:");
+        sb.AppendLine("{\"error\": \"I can only refine the existing trip. To create a new trip plan, please start a new planning session.\"}");
+        sb.AppendLine();
+        
+        sb.AppendLine("=== CURRENT JSON TRAVEL ITINERARY ===");
         sb.AppendLine(tripPlan);
         sb.AppendLine();
         
-        sb.AppendLine("=== user instruction ===");
+        sb.AppendLine("=== USER INSTRUCTION ===");
         sb.AppendLine(userPrompt);
         sb.AppendLine();
         
+        sb.AppendLine("=== ALLOWED MODIFICATIONS ===");
+        sb.AppendLine("You may ONLY:");
+        sb.AppendLine("• Modify dates/times of existing activities");
+        sb.AppendLine("• Replace an existing activity with a different one at the same location");
+        sb.AppendLine("• Remove activities from the itinerary");
+        sb.AppendLine("• Adjust activity details (description, duration) while keeping the activity");
+        sb.AppendLine("• Reorder existing activities");
+        sb.AppendLine();
+        sb.AppendLine("You may NOT:");
+        sb.AppendLine("• Add completely new destinations not in the original plan");
+        sb.AppendLine("• Expand the trip scope beyond the original structure");
+        sb.AppendLine("• Suggest an entirely different itinerary");
+        sb.AppendLine();
+        
         sb.AppendLine("=== OUTPUT FORMAT ===");
-        sb.AppendLine("Return ONLY valid JSON (no markdown, no explanation) matching the exact schema of the current JSON travel itinerary.");
+        sb.AppendLine("Return ONLY valid JSON (no markdown, no explanation, no error messages) matching the exact schema of the current JSON travel itinerary.");
         sb.AppendLine();
         sb.AppendLine("IMPORTANT RULES:");
-        sb.AppendLine("1. Keep the JSON structure exactly the same.");
-        sb.AppendLine("2. If you add a new activity that was not in the original plan, generate a Google Maps search link using this exact format: https://www.google.com/maps/search/?api=1&query=Activity+Name,+City+Name (replace spaces with +). If you don't know the website, set website to null.");
-        sb.AppendLine("3. Only apply the user's specific instruction, keeping the rest of the plan intact.");
+        sb.AppendLine("1. Keep the JSON structure exactly the same—do not add or remove top-level keys or array lengths (unless explicitly removing activities as per user request).");
+        sb.AppendLine("2. If you replace an activity with a new one, generate a Google Maps search link using this exact format: https://www.google.com/maps/search/?api=1&query=Activity+Name,+City+Name (replace spaces with +). If you don't know the website, set website to null.");
+        sb.AppendLine("3. Apply ONLY the user's specific instruction. Do NOT make any additional changes.");
+        sb.AppendLine("4. Preserve all unchanged activities, dates, and trip details exactly as they are.");
+        sb.AppendLine("5. Return ONLY the refined JSON. If the refinement is impossible or the request is out of scope, return: {\"error\": \"Refinement not possible: [reason]\"}");
 
         return sb.ToString();
     }
-
     private TripPlanResponse? TryParseLlmResponse(string llmResponse)
     {
         var json = ExtractJson(llmResponse);
@@ -733,10 +462,18 @@ public class TripPlanService : ITripPlanService
         {
             return JsonSerializer.Deserialize<TripPlanResponse>(json, JsonOptions);
         }
-        catch (JsonException ex)
+        catch (JsonException)
         {
-            _logger.LogWarning(ex, "Failed to parse LLM JSON response.");
-            return null;
+            var sanitized = SanitizeJson(json);
+            try
+            {
+                return JsonSerializer.Deserialize<TripPlanResponse>(sanitized, JsonOptions);
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse LLM JSON response even after sanitization.");
+                return null;
+            }
         }
     }
 
@@ -757,6 +494,13 @@ public class TripPlanService : ITripPlanService
             return text[braceStart..(braceEnd + 1)];
 
         return text;
+    }
+
+    private static string SanitizeJson(string json)
+    {
+        var sanitized = Regex.Replace(json, @",\s*([}\]])", "$1");
+        sanitized = Regex.Replace(sanitized, @"//.*?$", "", RegexOptions.Multiline);
+        return sanitized.Trim();
     }
 
     private static void PatchMissingFields(TripPlanResponse plan, TripContext context)

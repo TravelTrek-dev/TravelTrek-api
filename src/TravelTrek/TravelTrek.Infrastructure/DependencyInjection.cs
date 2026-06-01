@@ -193,9 +193,12 @@ namespace TravelTrek.Infrastructure
 
             #endregion
 
-            #region Trip Plan Orchestrator
+            #region Trip Plan Services
 
-            services.AddScoped<ITripPlanService, TripPlanService>();
+            services.AddScoped<ITripGenerationService, TripGenerationService>();
+            services.AddScoped<ITripPlanCrudService, TripPlanCrudService>();
+            services.AddScoped<ITripSharingService, TripSharingService>();
+            services.AddScoped<ITripExpenseService, TripExpenseService>();
 
             #endregion
 

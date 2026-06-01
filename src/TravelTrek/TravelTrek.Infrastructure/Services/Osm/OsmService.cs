@@ -106,47 +106,56 @@ public class OsmService : IOsmService
         var lonStr = coords.Lon.ToString(System.Globalization.CultureInfo.InvariantCulture);
  
         // osm
-        try
-        {
-            _logger.LogInformation("Attempting to fetch POIs from Overpass API (OSM) for {City} at ({Lat}, {Lon})", cityName, latStr, lonStr);
-            var overpassQuery = $@"
-            [out:json][timeout:90][maxsize:1073741824];
+        var overpassQuery = $@"
+            [out:json][timeout:30][maxsize:10485760];
             (
-              node[""tourism""~""museum|attraction|monument|gallery|castle|cathedral|viewpoint""](around:20000,{latStr},{lonStr});
-              way[""tourism""~""museum|attraction|monument|gallery|castle|cathedral|viewpoint""](around:20000,{latStr},{lonStr});
-              relation[""tourism""~""museum|attraction|monument|gallery|castle|cathedral|viewpoint""](around:20000,{latStr},{lonStr});
+              node[""tourism""~""museum|attraction|monument|gallery|castle|cathedral|viewpoint""](around:10000,{latStr},{lonStr});
+              way[""tourism""~""museum|attraction|monument|gallery|castle|cathedral|viewpoint""](around:10000,{latStr},{lonStr});
+              relation[""tourism""~""museum|attraction|monument|gallery|castle|cathedral|viewpoint""](around:10000,{latStr},{lonStr});
             );
             out tags center;
             ";
-            
-            var overpassContent = new FormUrlEncodedContent(new[]
-            {
-                new KeyValuePair<string, string>("data", overpassQuery)
-            });
- 
-            var overpassResponse = await _httpClient.PostAsync($"{_options.OverpassBaseUrl}interpreter", overpassContent, ct);
-            if (overpassResponse.IsSuccessStatusCode)
-            {
-                var overpassDataStr = await overpassResponse.Content.ReadAsStringAsync(ct);
-                var attractions = ParseOverpassResponse(overpassDataStr, limit, cityName);
-                if (attractions.Count > 0)
-                {
-                    _logger.LogInformation("Successfully fetched {Count} POIs from Overpass API for {City}", attractions.Count, cityName);
-                    return Result.Success(attractions);
-                }
-                _logger.LogWarning("Overpass API returned 0 attractions for {City}.", cityName);
-            }
-            else
-            {
-                _logger.LogWarning("Overpass API returned non-success status code: {Status}", overpassResponse.StatusCode);
-            }
-        }
-        catch (Exception ex)
+
+        var overpassEndpoints = new[]
         {
-            _logger.LogWarning(ex, "Error while fetching from Overpass API for {City}.", cityName);
+            $"{_options.OverpassBaseUrl}interpreter",
+            "https://overpass.kumi.systems/api/interpreter"
+        };
+
+        foreach (var endpoint in overpassEndpoints)
+        {
+            try
+            {
+                _logger.LogInformation("Attempting to fetch POIs from {Endpoint} for {City} at ({Lat}, {Lon})", endpoint, cityName, latStr, lonStr);
+                var overpassContent = new FormUrlEncodedContent(new[]
+                {
+                    new KeyValuePair<string, string>("data", overpassQuery)
+                });
+ 
+                var overpassResponse = await _httpClient.PostAsync(endpoint, overpassContent, ct);
+                if (overpassResponse.IsSuccessStatusCode)
+                {
+                    var overpassDataStr = await overpassResponse.Content.ReadAsStringAsync(ct);
+                    var attractions = ParseOverpassResponse(overpassDataStr, limit, cityName);
+                    if (attractions.Count > 0)
+                    {
+                        _logger.LogInformation("Successfully fetched {Count} POIs from {Endpoint} for {City}", attractions.Count, endpoint, cityName);
+                        return Result.Success(attractions);
+                    }
+                    _logger.LogWarning("Overpass API returned 0 attractions for {City} from {Endpoint}.", cityName, endpoint);
+                }
+                else
+                {
+                    _logger.LogWarning("Overpass API returned {Status} from {Endpoint} for {City}.", overpassResponse.StatusCode, endpoint, cityName);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error while fetching from {Endpoint} for {City}.", endpoint, cityName);
+            }
         }
  
-        _logger.LogError("Overpass API failed or returned empty for {City}.", cityName);
+        _logger.LogError("All Overpass endpoints failed for {City}.", cityName);
         return Result.Failure<List<OsmAttractionDto>>(Error.External("GetTopAttractions.External", "Failed to fetch pois from Overpass API"));
     }
 

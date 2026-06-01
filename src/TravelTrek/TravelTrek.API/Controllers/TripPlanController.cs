@@ -10,11 +10,17 @@ namespace TravelTrek.API.Controllers
     [Route("api/trip-plan")]
     public class TripPlanController : ApiBaseController
     {
-        private readonly ITripPlanService _tripPlanService;
+        private readonly ITripGenerationService _generationService;
+        private readonly ITripPlanCrudService _crudService;
+        private readonly ITripSharingService _sharingService;
+        private readonly ITripExpenseService _expenseService;
 
-        public TripPlanController(ITripPlanService tripPlanService)
+        public TripPlanController(ITripGenerationService generationService, ITripPlanCrudService crudService, ITripSharingService sharingService, ITripExpenseService expenseService)
         {
-            _tripPlanService = tripPlanService;
+            _generationService = generationService;
+            _crudService = crudService;
+            _sharingService = sharingService;
+            _expenseService = expenseService;
         }
         
         
@@ -26,7 +32,7 @@ namespace TravelTrek.API.Controllers
         [HttpPost("generate", Name = "GenerateTripPlan")]
         public async Task<IActionResult> GenerateTripPlan([FromBody] TripPlanRequest request, CancellationToken ct)
         {
-            var result = await _tripPlanService.GenerateTripPlanAsync(request, ct);
+            var result = await _generationService.GenerateTripPlanAsync(request, ct);
             return ToActionResult(result);
         }
 
@@ -41,7 +47,7 @@ namespace TravelTrek.API.Controllers
             var userId = GetUserId();
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("SaveTripPlan.Unauthorized", "Unauthorized Request")));
 
-            var result = await _tripPlanService.SaveCreatedTripPlanAsync(request, userId, ct);
+            var result = await _crudService.SaveCreatedTripPlanAsync(request, userId, ct);
             return ToCreatedResult(result);
         }
 
@@ -56,7 +62,7 @@ namespace TravelTrek.API.Controllers
             var userId = GetUserId();
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("UpdateTripPlan.Unauthorized", "Unauthorized Request")));
 
-            var result = await _tripPlanService.UpdateTripPlanAsync(id, request, userId, ct);
+            var result = await _crudService.UpdateTripPlanAsync(id, request, userId, ct);
             return ToActionResult(result);
         }
 
@@ -71,7 +77,7 @@ namespace TravelTrek.API.Controllers
             var userId = GetUserId();
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("DeleteTripPlan.Unauthorized", "Unauthorized Request")));
 
-            var result = await _tripPlanService.DeleteTripPlanAsync(id, userId, ct);
+            var result = await _crudService.DeleteTripPlanAsync(id, userId, ct);
             return ToActionResult(result);
         }
 
@@ -86,7 +92,7 @@ namespace TravelTrek.API.Controllers
             var userId = GetUserId();
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("GetTripPlan.Unauthorized", "Unauthorized Request")));
 
-            var result = await _tripPlanService.GetTripPlanAsync(id, userId);
+            var result = await _crudService.GetTripPlanAsync(id, userId);
             return ToActionResult(result);
         }
 
@@ -101,7 +107,7 @@ namespace TravelTrek.API.Controllers
             var userId = GetUserId();
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("GetTripPlans.Unauthorized", "Unauthorized Request")));
 
-            var result = await _tripPlanService.GetTripPlansAsync(userId);
+            var result = await _crudService.GetTripPlansAsync(userId);
             return ToActionResult(result);
         }
 
@@ -116,7 +122,7 @@ namespace TravelTrek.API.Controllers
             var userId = GetUserId();
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("RefinePlan.Unauthorized", "Unauthorized Request")));
 
-            var result = await _tripPlanService.RefinePlanAsync(request, id, userId, ct);
+            var result = await _generationService.RefinePlanAsync(request, id, userId, ct);
             return ToActionResult(result);
         }
 
@@ -131,7 +137,7 @@ namespace TravelTrek.API.Controllers
             var userId = GetUserId();
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("SaveRefinePlan.Unauthorized", "Unauthorized Request")));
 
-            var result = await _tripPlanService.SaveRefinedTripPlanAsync(id, request, userId, ct);
+            var result = await _crudService.SaveRefinedTripPlanAsync(id, request, userId, ct);
             return ToCreatedResult(result);
         }
 
@@ -146,7 +152,7 @@ namespace TravelTrek.API.Controllers
             var userId = GetUserId();
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("ShareTripPlan.Unauthorized", "Unauthorized Request")));
 
-            var result = await _tripPlanService.ShareTripPlanAsync(id, userId, ct);
+            var result = await _sharingService.ShareTripPlanAsync(id, userId, ct);
             return ToActionResult(result);
         }
 
@@ -157,7 +163,7 @@ namespace TravelTrek.API.Controllers
         [HttpGet("shared/{token}", Name = "GetSharedTripPlan")]
         public async Task<IActionResult> GetSharedTripPlan(string token, CancellationToken ct)
         {
-            var result = await _tripPlanService.GetSharedTripPlanAsync(token, ct);
+            var result = await _sharingService.GetSharedTripPlanAsync(token, ct);
             return ToActionResult(result);
         }
 
@@ -172,7 +178,7 @@ namespace TravelTrek.API.Controllers
             var userId = GetUserId();
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("CloneTrip.Unauthorized", "Unauthorized Request")));
 
-            var result = await _tripPlanService.CloneTripPlanAsync(token, userId, ct);
+            var result = await _sharingService.CloneTripPlanAsync(token, userId, ct);
             return ToCreatedResult(result);
         }
 
@@ -186,7 +192,7 @@ namespace TravelTrek.API.Controllers
             var userId = GetUserId();
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("AddTripExpense.Unauthorized", "Unauthorized Request")));
 
-            var result = await _tripPlanService.AddTripExpenseAsync(request, tripId, userId, ct);
+            var result = await _expenseService.AddTripExpenseAsync(request, tripId, userId, ct);
             return ToCreatedResult(result);
         }
 
@@ -200,7 +206,7 @@ namespace TravelTrek.API.Controllers
             var userId = GetUserId();
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("GetTripExpenses.Unauthorized", "Unauthorized Request")));
 
-            var result = await _tripPlanService.GetTripExpensesAsync(tripId, userId, ct);
+            var result = await _expenseService.GetTripExpensesAsync(tripId, userId, ct);
             return ToActionResult(result);
         }
 
@@ -214,7 +220,7 @@ namespace TravelTrek.API.Controllers
             var userId = GetUserId();
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("UpdateTripExpense.Unauthorized", "Unauthorized Request")));
 
-            var result = await _tripPlanService.EditTripExpenseAsync(request, id, userId, ct);
+            var result = await _expenseService.EditTripExpenseAsync(request, id, userId, ct);
             return ToActionResult(result);
         }
         
@@ -228,7 +234,7 @@ namespace TravelTrek.API.Controllers
             var userId = GetUserId();
             if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("UpdateTripExpense.Unauthorized", "Unauthorized Request")));
 
-            var result = await _tripPlanService.DeleteTripExpenseAsync(id, userId, ct);
+            var result = await _expenseService.DeleteTripExpenseAsync(id, userId, ct);
             return ToActionResult(result);
         }
     }
