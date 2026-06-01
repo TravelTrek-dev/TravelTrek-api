@@ -14,6 +14,7 @@ public class OsmService : IOsmService
     private readonly OsmApiOptions _options;
     private readonly IOpenWeatherService _weatherService;
     private readonly ILogger<OsmService> _logger;
+    private readonly ICacheService _cache;
 
     private class CityCoordinates
     {
@@ -21,16 +22,26 @@ public class OsmService : IOsmService
         public double Lon { get; set; }
     }
 
-    public OsmService(HttpClient httpClient, IOptions<OsmApiOptions> options, IOpenWeatherService weatherService, ILogger<OsmService> logger)
+    public OsmService(HttpClient httpClient, IOptions<OsmApiOptions> options, IOpenWeatherService weatherService, ILogger<OsmService> logger, ICacheService cache)
     {
         _httpClient = httpClient;
         _options = options.Value;
         _weatherService = weatherService;
         _logger = logger;
+        _cache = cache;
     }
 
     private async Task<Result<CityCoordinates>> GetCoordinatesAsync(string cityName, CancellationToken ct)
     {
+        var cacheKey = $"geo:{cityName.ToLowerInvariant().Trim()}";
+
+        var cached = await _cache.GetAsync<CityCoordinates>(cacheKey, ct);
+        if (cached != null)
+        {
+            _logger.LogInformation("Cache hit for geocoding '{City}'.", cityName);
+            return Result.Success(cached);
+        }
+
         // 1. Try Nominatim Geocoding (OSM)
         try
         {
@@ -59,7 +70,9 @@ public class OsmService : IOsmService
                             double.TryParse(lonStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var lon))
                         {
                             _logger.LogInformation("Nominatim geocoding successful for {City}: Lat={Lat}, Lon={Lon}", cityName, lat, lon);
-                            return Result.Success(new CityCoordinates { Lat = lat, Lon = lon });
+                            var result = new CityCoordinates { Lat = lat, Lon = lon };
+                            await _cache.SetAsync(cacheKey, result, TimeSpan.FromDays(7), ct);
+                            return Result.Success(result);
                         }
                     }
                 }
@@ -80,7 +93,9 @@ public class OsmService : IOsmService
             {
                 var geo = openWeatherResult.Value;
                 _logger.LogInformation("OpenWeather geocoding successful for {City}: Lat={Lat}, Lon={Lon}", cityName, geo.Lat, geo.Lon);
-                return Result.Success(new CityCoordinates { Lat = geo.Lat, Lon = geo.Lon });
+                var result = new CityCoordinates { Lat = geo.Lat, Lon = geo.Lon };
+                await _cache.SetAsync(cacheKey, result, TimeSpan.FromDays(7), ct);
+                return Result.Success(result);
             }
             _logger.LogWarning("OpenWeather geocoding failed: {Error}", openWeatherResult.Error);
         }
@@ -94,6 +109,15 @@ public class OsmService : IOsmService
  
     public async Task<Result<List<OsmAttractionDto>>> GetTopAttractionsAsync(string cityName, int limit = 40, CancellationToken ct = default)
     {
+        var cacheKey = $"poi:{cityName.ToLowerInvariant().Trim()}:{limit}";
+
+        var cached = await _cache.GetAsync<List<OsmAttractionDto>>(cacheKey, ct);
+        if (cached != null)
+        {
+            _logger.LogInformation("Cache hit for POIs '{City}' (limit={Limit}).", cityName, limit);
+            return Result.Success(cached);
+        }
+
         var coordsResult = await GetCoordinatesAsync(cityName, ct);
         if (coordsResult.IsFailure)
         {
@@ -140,6 +164,7 @@ public class OsmService : IOsmService
                     if (attractions.Count > 0)
                     {
                         _logger.LogInformation("Successfully fetched {Count} POIs from {Endpoint} for {City}", attractions.Count, endpoint, cityName);
+                        await _cache.SetAsync(cacheKey, attractions, TimeSpan.FromHours(24), ct);
                         return Result.Success(attractions);
                     }
                     _logger.LogWarning("Overpass API returned 0 attractions for {City} from {Endpoint}.", cityName, endpoint);

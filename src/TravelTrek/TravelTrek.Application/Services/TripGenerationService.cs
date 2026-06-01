@@ -21,9 +21,10 @@ public class TripGenerationService : ITripGenerationService
     private readonly ILogger<TripGenerationService> _logger;
     private readonly ITripPlanRepository _tripPlanRepository;
     private readonly AutoMapper.IMapper _mapper;
+    private readonly ICacheService _cache;
     
     private const int MinPoisPerDay = 3;
-    private const int DefaultPoiLimit = 12;
+    private const int DefaultPoiLimit = 20;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -31,7 +32,7 @@ public class TripGenerationService : ITripGenerationService
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    public TripGenerationService(INerService nerService, IOsmService osmService, IOpenWeatherService weatherService, ILLMService illmService, ILogger<TripGenerationService> logger, ITripPlanRepository tripPlanRepository, AutoMapper.IMapper mapper)
+    public TripGenerationService(INerService nerService, IOsmService osmService, IOpenWeatherService weatherService, ILLMService illmService, ILogger<TripGenerationService> logger, ITripPlanRepository tripPlanRepository, AutoMapper.IMapper mapper, ICacheService cache)
     {
         _nerService = nerService;
         _osmService = osmService;
@@ -40,6 +41,7 @@ public class TripGenerationService : ITripGenerationService
         _logger = logger;
         _tripPlanRepository = tripPlanRepository;
         _mapper = mapper;
+        _cache = cache;
     }
 
     public async Task<Result<TripPlanResponse>> GenerateTripPlanAsync(TripPlanRequest request, CancellationToken ct = default)
@@ -177,6 +179,15 @@ public class TripGenerationService : ITripGenerationService
 
     private async Task<WeatherSummaryDto?> GetWeatherForCityAsync(string city, CancellationToken ct)
     {
+        var cacheKey = $"weather:{city.ToLowerInvariant().Trim()}";
+
+        var cached = await _cache.GetAsync<WeatherSummaryDto>(cacheKey, ct);
+        if (cached != null)
+        {
+            _logger.LogInformation("Cache hit for weather '{City}'.", city);
+            return cached;
+        }
+
         try
         {
             var geocodeResult = await _weatherService.GeocodeByNameAsync(city, ct);
@@ -196,7 +207,7 @@ public class TripGenerationService : ITripGenerationService
             var forecast = forecastResult.Value;
             if (forecastResult.IsSuccess && forecastResult.Value.Items.Count > 0)
             {
-                return new WeatherSummaryDto
+                var summary = new WeatherSummaryDto
                 {
                     AvgTempCelsius = Math.Round(forecast.Items.Average(i => i.Main.Temp), 1),
                     Condition = forecast.Items
@@ -207,6 +218,8 @@ public class TripGenerationService : ITripGenerationService
                     AvgHumidity = Math.Round(forecast.Items.Average(i => i.Main.Humidity), 1),
                     AvgWindSpeed = Math.Round(forecast.Items.Average(i => i.Wind.Speed), 1)
                 };
+                await _cache.SetAsync(cacheKey, summary, TimeSpan.FromHours(2), ct);
+                return summary;
             }
 
             _logger.LogWarning("Forecast unavailable for '{City}', falling back to current weather.", city);
@@ -218,13 +231,15 @@ public class TripGenerationService : ITripGenerationService
             }
 
             var c = currentResult.Value;
-            return new WeatherSummaryDto
+            var currentSummary = new WeatherSummaryDto
             {
                 AvgTempCelsius = c.Main.Temp,
                 Condition = c.Weather.FirstOrDefault()?.Description ?? "Unknown",
                 AvgHumidity = c.Main.Humidity,
                 AvgWindSpeed = c.Wind.Speed
             };
+            await _cache.SetAsync(cacheKey, currentSummary, TimeSpan.FromHours(2), ct);
+            return currentSummary;
         }
         catch (Exception ex)
         {
@@ -341,11 +356,12 @@ public class TripGenerationService : ITripGenerationService
                         sb.AppendLine($"   Website: {a.Website}");
                 }
 
-                sb.AppendLine("If the available points of interest, You MUST fetch the remaining from https://www.lonelyplanet.com/");
+                sb.AppendLine();
+                sb.AppendLine("IMPORTANT: The list above may NOT include every famous landmark. If a world-famous or iconic attraction for this destination is missing from the list above (e.g. Eiffel Tower for Paris, Colosseum for Rome, Pyramids for Cairo), you MUST still include it in the itinerary. Generate a Google Maps search link for it using the format: https://www.google.com/maps/search/?api=1&query=Place+Name,+City+Name and set website to null.");
             }
             else
             {
-                sb.AppendLine("No pre-extracted points of interest are available. You MUST fetch, search, and recommend top points of interest and attractions using: https://www.lonelyplanet.com/");
+                sb.AppendLine("No pre-extracted points of interest are available. You MUST recommend the most famous and iconic landmarks and attractions for each destination city from your own knowledge. Generate a Google Maps search link for each using the format: https://www.google.com/maps/search/?api=1&query=Place+Name,+City+Name and set website to null.");
             }
             sb.AppendLine();
             
@@ -402,6 +418,7 @@ public class TripGenerationService : ITripGenerationService
         sb.AppendLine("9. You MUST include activities from ALL the extracted destination cities. Divide the number of days equally among the cities if possible (e.g., for a 4-day trip to 2 cities, assign the first 2 days to the first city, and the next 2 days to the second city). Group days by city sequentially so the traveler does not jump back and forth between cities.");
         sb.AppendLine("10. Multi-City Transit Rule: For multi-city trips, when transitioning between different cities (e.g., Day 2 is Paris and Day 3 is Marseille), you MUST insert a transit block at the end of Day 2 or the start of Day 3. Set its \"type\" property to \"Transit\", \"name\" to something descriptive (e.g., \"Transit: Paris to Marseille by Train\"), \"city\" to the destination city, and \"description\" to practical advice (e.g., \"Board the high-speed TGV train from Gare de Lyon... duration 3 hours\"). Normal sightseeing/POIs MUST have \"type\" set to \"Activity\".");
         sb.AppendLine("11. Budget Allocation Rule: You MUST ensure that the sum of the 'approximateCost' values across all suggested activities and dining spots is highly reasonable and fits within the traveler's total budget. Tailor the experiences to match the budget tier (e.g. free/budget activities for low budgets, and luxury/premium dining for generous budgets).");
+        sb.AppendLine("12. Famous Landmarks Rule: You MUST ensure that every world-famous, iconic landmark for the destination is included in the itinerary, even if it was not in the provided POI list. A trip to Paris without the Eiffel Tower, or Rome without the Colosseum, is unacceptable.");
 
         return sb.ToString();
     }

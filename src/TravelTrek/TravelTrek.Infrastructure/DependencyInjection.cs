@@ -22,6 +22,7 @@ using TravelTrek.Infrastructure.Services.Weather;
 using TravelTrek.Infrastructure.Services.Ner;
 using TravelTrek.Infrastructure.Services.Osm;
 using TravelTrek.Infrastructure.Services.Ollama;
+using TravelTrek.Infrastructure.Services.Cache;
 using TravelTrek.Application.Services;
 
 namespace TravelTrek.Infrastructure
@@ -37,6 +38,18 @@ namespace TravelTrek.Infrastructure
 
             services.AddDbContext<AppDbContext>(options =>
                 options.UseSqlServer(connectionString));
+
+            #endregion
+
+            #region Redis Cache
+
+            services.AddStackExchangeRedisCache(options =>
+            {
+                options.Configuration = configuration.GetConnectionString("Redis") ?? "localhost:6379";
+                options.InstanceName = "TravelTrek:";
+            });
+
+            services.AddSingleton<ICacheService, RedisCacheService>();
 
             #endregion
 
