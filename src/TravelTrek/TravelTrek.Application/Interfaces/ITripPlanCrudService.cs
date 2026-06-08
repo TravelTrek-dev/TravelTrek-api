@@ -11,4 +11,5 @@ public interface ITripPlanCrudService
     Task<Result> DeleteTripPlanAsync(Guid tripId, Guid userId, CancellationToken ct = default);
     Task<Result<TripPlanResponse>> GetTripPlanAsync(Guid id, Guid userId);
     Task<Result<IEnumerable<TripPlanResponse>>> GetTripPlansAsync(Guid userId);
+    Task<Result<UserPromptsResponse>> GetUserPromptsAsync(Guid userId);
 }

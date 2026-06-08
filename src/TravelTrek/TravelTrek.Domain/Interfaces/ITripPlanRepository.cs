@@ -6,6 +6,7 @@ namespace TravelTrek.Domain.Interfaces
     {
         Task<TripPlan?> GetTripPlanWithDetailsAsync(Guid tripPlanId);
         Task<IEnumerable<TripPlan>> GetUserTripPlansAsync(Guid userId);
+        Task<List<(Guid TripId, string Prompt)>> GetUserPromptsAsync(Guid userId);
         Task<bool> Exists(Guid id);
     }
 }

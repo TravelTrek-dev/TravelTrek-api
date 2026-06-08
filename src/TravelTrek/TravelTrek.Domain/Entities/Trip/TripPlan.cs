@@ -4,6 +4,8 @@ public class TripPlan
 {
     public Guid Id { get; set; }
     public Guid UserId { get; set; } // fk
+    public string Prompt { get; set; } = string.Empty;
+    
     public string City { get; set; } = string.Empty;
     public string? Country { get; set; }
     public decimal? Budget { get; set; }

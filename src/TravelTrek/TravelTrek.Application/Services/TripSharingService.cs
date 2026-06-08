@@ -107,9 +107,11 @@ public class TripSharingService : ITripSharingService
         {
             Id = Guid.NewGuid(),
             UserId = userId,
+            Prompt = sourcePlan.Prompt,
             City = sourcePlan.City,
             Country = sourcePlan.Country,
             Budget = sourcePlan.Budget,
+            Currency = sourcePlan.Currency,
             GroupSize = sourcePlan.GroupSize,
             GeneralAdvice = sourcePlan.GeneralAdvice,
             PackingTips = sourcePlan.PackingTips != null ? new List<string>(sourcePlan.PackingTips) : null,

@@ -127,6 +127,21 @@ namespace TravelTrek.API.Controllers
         }
 
         /// <summary>
+        /// Retrieves all prompts made by the authenticated user.
+        /// </summary>
+        [Authorize]
+        [EnableRateLimiting("trip-db")]
+        [HttpGet("prompts", Name = "GetUserPrompts")]
+        public async Task<IActionResult> GetUserPrompts()
+        {
+            var userId = GetUserId();
+            if (userId == Guid.Empty) return ToActionResult(Result.Failure(Error.Forbidden("GetUserPrompts.Unauthorized", "Unauthorized Request")));
+
+            var result = await _crudService.GetUserPromptsAsync(userId);
+            return ToActionResult(result);
+        }
+
+        /// <summary>
         /// Saves a refined version of an existing trip plan.
         /// </summary>
         [Authorize]

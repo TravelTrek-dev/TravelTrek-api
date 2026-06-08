@@ -115,4 +115,21 @@ public class TripPlanCrudService : ITripPlanCrudService
         var tripPlansDto = _mapper.Map<IEnumerable<TripPlanResponse>>(tripPlans);
         return Result.Success(tripPlansDto);
     }
+
+    public async Task<Result<UserPromptsResponse>> GetUserPromptsAsync(Guid userId)
+    {
+        var prompts = await _tripPlanRepository.GetUserPromptsAsync(userId);
+
+        var response = new UserPromptsResponse
+        {
+            UserId = userId,
+            Prompts = prompts.Select(p => new PromptItem
+            {
+                TripId = p.TripId,
+                Prompt = p.Prompt
+            }).ToList()
+        };
+
+        return Result.Success(response);
+    }
 }

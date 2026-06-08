@@ -20,9 +20,17 @@ namespace TravelTrek.Infrastructure.Repositories.Trip
         {
             return await _dbSet.Where(t => t.UserId == userId).Include(t => t.Days).ThenInclude(d => d.Activities).ToListAsync();
         }
-        
-        
-        
+
+        public async Task<List<(Guid TripId, string Prompt)>> GetUserPromptsAsync(Guid userId)
+        {
+            var results = await _dbSet
+                .Where(t => t.UserId == userId)
+                .Select(t => new { t.Id, t.Prompt })
+                .ToListAsync();
+
+            return results.Select(t => (t.Id, t.Prompt)).ToList();
+        }
+
         public async Task<bool> Exists(Guid id)
         {
             return await _dbSet.AnyAsync(e => e.Id == id);

@@ -9,6 +9,8 @@ public class TripPlanResponse
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public Guid? Id { get; set; }
+
+    public string Prompt { get; set; } = string.Empty;
     public string City { get; set; } = string.Empty;
     public string? Country { get; set; }
     public string? Duration { get; set; }

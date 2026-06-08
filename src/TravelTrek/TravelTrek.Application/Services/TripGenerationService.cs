@@ -73,6 +73,7 @@ public class TripGenerationService : ITripGenerationService
                     return Result.Failure<TripPlanResponse>(Error.External("TripPlan.ParseFailed", "Failed to parse the generated itinerary after retry. Please try again."));
             }
 
+            promptOnlyPlan.Prompt = request.Prompt;
             return Result.Success(promptOnlyPlan);   
         }
 
@@ -135,6 +136,8 @@ public class TripGenerationService : ITripGenerationService
         }
 
         PatchMissingFields(plan, context);
+
+        plan.Prompt = request.Prompt;
         return Result.Success(plan);
     }
     
@@ -172,6 +175,8 @@ public class TripGenerationService : ITripGenerationService
             if (plan == null)
                 return Result.Failure<TripPlanResponse>(Error.External("RefinePlan.ParseFailed", "Failed to parse the refined itinerary after retry. Please try again."));
         }
+
+        plan.Prompt = request.UserPrompt;
         return Result.Success(plan);
     }
 
@@ -447,28 +452,32 @@ public class TripGenerationService : ITripGenerationService
         sb.AppendLine();
         
         sb.AppendLine("=== ALLOWED MODIFICATIONS ===");
-        sb.AppendLine("You may ONLY:");
+        sb.AppendLine("You may:");
+        sb.AppendLine("• Add new days with FULLY POPULATED activities, meals, and POIs when the user asks to extend the trip");
+        sb.AppendLine("• Remove days when the user asks to shorten the trip");
         sb.AppendLine("• Modify dates/times of existing activities");
-        sb.AppendLine("• Replace an existing activity with a different one at the same location");
-        sb.AppendLine("• Remove activities from the itinerary");
-        sb.AppendLine("• Adjust activity details (description, duration) while keeping the activity");
+        sb.AppendLine("• Replace an existing activity with a different one");
+        sb.AppendLine("• Remove or add activities within a day");
+        sb.AppendLine("• Adjust activity details (description, cost, type) while keeping the activity");
         sb.AppendLine("• Reorder existing activities");
+        sb.AppendLine("• Change budget, duration, group size, or other trip-level fields as requested");
         sb.AppendLine();
         sb.AppendLine("You may NOT:");
-        sb.AppendLine("• Add completely new destinations not in the original plan");
-        sb.AppendLine("• Expand the trip scope beyond the original structure");
-        sb.AppendLine("• Suggest an entirely different itinerary");
+        sb.AppendLine("• Create an entirely different itinerary unrelated to the original trip");
+        sb.AppendLine("• Make changes the user did NOT ask for");
         sb.AppendLine();
         
         sb.AppendLine("=== OUTPUT FORMAT ===");
         sb.AppendLine("Return ONLY valid JSON (no markdown, no explanation, no error messages) matching the exact schema of the current JSON travel itinerary.");
         sb.AppendLine();
         sb.AppendLine("IMPORTANT RULES:");
-        sb.AppendLine("1. Keep the JSON structure exactly the same—do not add or remove top-level keys or array lengths (unless explicitly removing activities as per user request).");
-        sb.AppendLine("2. If you replace an activity with a new one, generate a Google Maps search link using this exact format: https://www.google.com/maps/search/?api=1&query=Activity+Name,+City+Name (replace spaces with +). If you don't know the website, set website to null.");
-        sb.AppendLine("3. Apply ONLY the user's specific instruction. Do NOT make any additional changes.");
-        sb.AppendLine("4. Preserve all unchanged activities, dates, and trip details exactly as they are.");
-        sb.AppendLine("5. Return ONLY the refined JSON. If the refinement is impossible or the request is out of scope, return: {\"error\": \"Refinement not possible: [reason]\"}");
+        sb.AppendLine("1. Keep the same JSON schema/keys. You MAY add or remove items from the \"days\" array if the user explicitly asks to extend or shorten the trip.");
+        sb.AppendLine("2. When ADDING new days, each new day MUST be fully populated with at least 3 activities (with name, description, googleMapsLink, approximateCost, type), and a meals object (breakfast, lunch, dinner). NEVER add an empty day.");
+        sb.AppendLine("3. For any new or replaced activity, generate a Google Maps search link using this exact format: https://www.google.com/maps/search/?api=1&query=Activity+Name,+City+Name (replace spaces with +). If you don't know the website, set website to null.");
+        sb.AppendLine("4. Apply ONLY the user's specific instruction. Do NOT make any additional changes to parts the user didn't mention.");
+        sb.AppendLine("5. Preserve all unchanged activities, days, and trip details exactly as they are.");
+        sb.AppendLine("6. If the trip duration field exists, update it to match the new number of days (e.g., \"3 days\" if there are now 3 days).");
+        sb.AppendLine("7. Return ONLY the refined JSON. If the refinement is impossible or the request is out of scope, return: {\"error\": \"Refinement not possible: [reason]\"}");
 
         return sb.ToString();
     }
