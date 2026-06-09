@@ -17,6 +17,7 @@ public class TripPlanResponse
     public decimal? Budget { get; set; }
     public string? Currency { get; set; }
     public string? GroupSize { get; set; }
+    public string? ImageUrl { get; set; }
     public WeatherSummaryDto? Weather { get; set; }
     public List<DayPlanDto> Days { get; set; } = new();
     public List<string> PackingTips { get; set; } = new();
@@ -60,6 +61,7 @@ public class ActivityDto
     public string Description { get; set; } = string.Empty;
     public string? GoogleMapsLink { get; set; }
     public string? Website { get; set; }
+    public string? ImageUrl { get; set; }
     public string? City { get; set; }
     public string? ApproximateCost { get; set; }
     public string Type { get; set; } = "Activity";

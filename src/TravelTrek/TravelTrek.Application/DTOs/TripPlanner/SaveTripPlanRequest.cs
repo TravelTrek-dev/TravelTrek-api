@@ -10,6 +10,7 @@ public class SaveTripPlanRequest
     public decimal? Budget { get; set; }
     public string? Currency { get; set; }
     public string? GroupSize { get; set; }
+    public string? ImageUrl { get; set; }
     public WeatherSummaryDto? Weather { get; set; }
     public List<DayPlanDto> Days { get; set; } = new();
     public List<string> PackingTips { get; set; } = new();

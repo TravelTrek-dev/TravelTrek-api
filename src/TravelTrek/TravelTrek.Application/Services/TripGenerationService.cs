@@ -15,7 +15,7 @@ namespace TravelTrek.Application.Services;
 public class TripGenerationService : ITripGenerationService
 {
     private readonly INerService _nerService;
-    private readonly IOsmService _osmService;
+    private readonly IPoiService _poiService;
     private readonly IOpenWeatherService _weatherService;
     private readonly ILLMService _illmService;
     private readonly ILogger<TripGenerationService> _logger;
@@ -32,10 +32,61 @@ public class TripGenerationService : ITripGenerationService
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    public TripGenerationService(INerService nerService, IOsmService osmService, IOpenWeatherService weatherService, ILLMService illmService, ILogger<TripGenerationService> logger, ITripPlanRepository tripPlanRepository, AutoMapper.IMapper mapper, ICacheService cache)
+    private static readonly Dictionary<string, List<string>> CountryToCities = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["France"] = new() { "Paris", "Nice" },
+        ["United Kingdom"] = new() { "London", "Edinburgh" },
+        ["UK"] = new() { "London", "Edinburgh" },
+        ["Great Britain"] = new() { "London", "Edinburgh" },
+        ["England"] = new() { "London", "Manchester" },
+        ["Scotland"] = new() { "Edinburgh", "Glasgow" },
+        ["Ireland"] = new() { "Dublin", "Galway" },
+        ["Germany"] = new() { "Berlin", "Munich" },
+        ["Italy"] = new() { "Rome", "Florence" },
+        ["Spain"] = new() { "Madrid", "Barcelona" },
+        ["Japan"] = new() { "Tokyo", "Kyoto" },
+        ["Egypt"] = new() { "Cairo", "Luxor" },
+        ["United States"] = new() { "New York City", "Los Angeles" },
+        ["USA"] = new() { "New York City", "Los Angeles" },
+        ["US"] = new() { "New York City", "Los Angeles" },
+        ["United States of America"] = new() { "New York City", "Los Angeles" },
+        ["Canada"] = new() { "Toronto", "Vancouver" },
+        ["Australia"] = new() { "Sydney", "Melbourne" },
+        ["China"] = new() { "Beijing", "Shanghai" },
+        ["Brazil"] = new() { "Rio de Janeiro", "Sao Paulo" },
+        ["India"] = new() { "New Delhi", "Mumbai" },
+        ["South Korea"] = new() { "Seoul", "Busan" },
+        ["Turkey"] = new() { "Istanbul", "Cappadocia" },
+        ["Saudi Arabia"] = new() { "Riyadh", "Jeddah" },
+        ["United Arab Emirates"] = new() { "Dubai", "Abu Dhabi" },
+        ["UAE"] = new() { "Dubai", "Abu Dhabi" },
+        ["Greece"] = new() { "Athens", "Santorini" },
+        ["Netherlands"] = new() { "Amsterdam", "Rotterdam" },
+        ["Switzerland"] = new() { "Zurich", "Geneva" },
+        ["Sweden"] = new() { "Stockholm", "Gothenburg" },
+        ["Norway"] = new() { "Oslo", "Bergen" },
+        ["Denmark"] = new() { "Copenhagen", "Aarhus" },
+        ["Austria"] = new() { "Vienna", "Salzburg" },
+        ["Portugal"] = new() { "Lisbon", "Porto" },
+        ["Mexico"] = new() { "Mexico City", "Cancun" },
+        ["South Africa"] = new() { "Cape Town", "Johannesburg" },
+        ["Thailand"] = new() { "Bangkok", "Phuket" },
+        ["Singapore"] = new() { "Singapore" },
+        ["Malaysia"] = new() { "Kuala Lumpur", "Penang" },
+        ["Vietnam"] = new() { "Hanoi", "Ho Chi Minh City" },
+        ["Indonesia"] = new() { "Bali", "Jakarta" },
+        ["New Zealand"] = new() { "Auckland", "Queenstown" },
+        ["Argentina"] = new() { "Buenos Aires", "Bariloche" },
+        ["Chile"] = new() { "Santiago", "Valparaiso" },
+        ["Colombia"] = new() { "Bogota", "Medellin" },
+        ["Peru"] = new() { "Lima", "Cusco" },
+        ["Morocco"] = new() { "Marrakech", "Fes" },
+    };
+
+    public TripGenerationService(INerService nerService, IPoiService poiService, IOpenWeatherService weatherService, ILLMService illmService, ILogger<TripGenerationService> logger, ITripPlanRepository tripPlanRepository, AutoMapper.IMapper mapper, ICacheService cache)
     {
         _nerService = nerService;
-        _osmService = osmService;
+        _poiService = poiService;
         _weatherService = weatherService;
         _illmService = illmService;
         _logger = logger;
@@ -46,38 +97,48 @@ public class TripGenerationService : ITripGenerationService
 
     public async Task<Result<TripPlanResponse>> GenerateTripPlanAsync(TripPlanRequest request, CancellationToken ct = default)
     {
+        _logger.LogInformation("=== [GENERATE TRIP PLAN START] Prompt: '{Prompt}' ===", request.Prompt);
+
         var nerRequest = new NerRequest { Inputs = request.Prompt };
+        _logger.LogInformation("Calling NER Service to extract locations, budget, duration, and group size.");
         var rawEntitiesResult = await _nerService.ExtractEntitiesAsync(nerRequest, ct);
 
         if (rawEntitiesResult.IsFailure)
         {
-            _logger.LogWarning("NER extraction failed: {Error}", rawEntitiesResult.Error);
+            _logger.LogWarning("NER Service extraction failed: {Error}. Falling back to prompt-only LLM generation.", rawEntitiesResult.Error);
             var promptOnlyContext = new TripContext { UserPrompt = request.Prompt, NerSucceeded = false};
 
+            _logger.LogInformation("Requesting prompt-only itinerary generation from LLM Service.");
             var promptOnlyLlmResult = await _illmService.GenerateAsync(BuildGeneratePlanLlmPrompt(promptOnlyContext), ct);
             if (promptOnlyLlmResult.IsFailure)
             {
-                _logger.LogWarning("LLM generation failed: {Error}", promptOnlyLlmResult.Error);
+                _logger.LogWarning("Fallback LLM generation failed: {Error}", promptOnlyLlmResult.Error);
                 return Result.Failure<TripPlanResponse>(promptOnlyLlmResult.Error);
             }
 
+            _logger.LogInformation("Parsing fallback LLM response.");
             var promptOnlyPlan = TryParseLlmResponse(promptOnlyLlmResult.Value);
             if (promptOnlyPlan == null)
             {
-                _logger.LogWarning("First LLM parse failed (NER-fallback), retrying...");
+                _logger.LogWarning("First fallback LLM parse failed, retrying generation...");
                 var retryResult = await _illmService.GenerateAsync(BuildGeneratePlanLlmPrompt(promptOnlyContext), ct);
                 if (retryResult.IsSuccess)
                     promptOnlyPlan = TryParseLlmResponse(retryResult.Value);
 
                 if (promptOnlyPlan == null)
+                {
+                    _logger.LogError("Fallback LLM parse failed after retry.");
                     return Result.Failure<TripPlanResponse>(Error.External("TripPlan.ParseFailed", "Failed to parse the generated itinerary after retry. Please try again."));
+                }
             }
 
+            _logger.LogInformation("=== [GENERATE TRIP PLAN SUCCESS (FALLBACK)] ===");
             promptOnlyPlan.Prompt = request.Prompt;
             return Result.Success(promptOnlyPlan);   
         }
 
         var rawEntities = rawEntitiesResult.Value;
+        _logger.LogInformation("NER Service extraction succeeded. Checking feasibility.");
         var feasibilityResult = await _nerService.CheckFeasibilityAsync(rawEntities, ct);
         if (feasibilityResult.IsSuccess && !feasibilityResult.Value.IsFeasible)
         {
@@ -88,17 +149,54 @@ public class TripGenerationService : ITripGenerationService
         var tripData = ParseTripData(rawEntities);
         if (tripData.Locations.Count == 0)
         {
+            _logger.LogWarning("Could not extract any locations/cities from prompt: '{Prompt}'", request.Prompt);
             return Result.Failure<TripPlanResponse>(Error.Validation("TripPlan.NoCity", "Could not extract a destination city from your prompt. Please include a city name."));
         }
 
-        _logger.LogInformation("NER extracted — City: {cities}, Duration: {Duration}, Budget: {Budget}, GroupSize: {GroupSize}",
-            tripData.Locations, tripData.Durations.FirstOrDefault() ?? "N/A", tripData.Budgets.FirstOrDefault() ?? "N/A", tripData.GroupSizes.FirstOrDefault() ?? "N/A");
+        _logger.LogInformation("NER parsed variables - Locations: [{Cities}], Duration: {Duration}, Budget: {Budget}, GroupSize: {GroupSize}",
+            string.Join(", ", tripData.Locations), tripData.Durations.FirstOrDefault() ?? "N/A", tripData.Budgets.FirstOrDefault() ?? "N/A", tripData.GroupSizes.FirstOrDefault() ?? "N/A");
         
-        
-        var osmTasks = tripData.Locations.Select(city => _osmService.GetTopAttractionsAsync(city, DefaultPoiLimit, ct)).ToList();
-        var weatherTasks = tripData.Locations.Select(city => GetWeatherForCityAsync(city, ct)).ToList();
+        var mappedLocations = new List<string>();
+        foreach (var location in tripData.Locations)
+        {
+            if (CountryToCities.TryGetValue(location, out var famousCities))
+            {
+                _logger.LogInformation("Location '{Country}' mapped as a country. Expanding to famous cities: [{Cities}]", location, string.Join(", ", famousCities));
+                foreach (var city in famousCities)
+                {
+                    mappedLocations.Add($"{city}, {location}");
+                }
+            }
+            else
+            {
+                var country = GetCountryForCity(location);
+                if (country != null)
+                {
+                    _logger.LogInformation("City '{City}' mapped to country '{Country}'. Using city-country query for POI and weather fetch.", location, country);
+                    mappedLocations.Add($"{location}, {country}");
+                }
+                else
+                {
+                    mappedLocations.Add(location);
+                }
+            }
+        }
+
+        mappedLocations = mappedLocations.Select(loc => loc.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        _logger.LogInformation("Final destination query list: [{Locations}]", string.Join(", ", mappedLocations));
+
+        var durationStr = tripData.Durations.FirstOrDefault();
+        var days = ParseDurationToDays(durationStr);
+        var poiLimit = Math.Clamp(days * 4, 10, 25);
+        _logger.LogInformation("Calculated days={Days}, POI limit={PoiLimit} per city.", days, poiLimit);
+
+        _logger.LogInformation("Launching parallel POI & Weather fetch tasks for all mapped destinations.");
+        var osmTasks = mappedLocations.Select(city => _poiService.GetTopAttractionsAsync(city, poiLimit, ct)).ToList();
+        var weatherTasks = mappedLocations.Select(city => GetWeatherForCityAsync(city, ct)).ToList();
         
         await Task.WhenAll(osmTasks.Cast<Task>().Concat(weatherTasks));
+        _logger.LogInformation("Parallel POI & Weather fetch tasks completed.");
         
         var attractionsResults = osmTasks.Select(t => t.Result).ToArray();
         var weatherResults = weatherTasks.Select(t => t.Result).ToArray();
@@ -106,38 +204,49 @@ public class TripGenerationService : ITripGenerationService
         var attractions = attractionsResults.Where(result => result.IsSuccess).SelectMany(result => result.Value).ToList();
         var weather = weatherResults.Where(w => w != null).ToList();
 
+        _logger.LogInformation("Collected {AttractionCount} total attractions and {WeatherCount} weather states across destinations.", attractions.Count, weather.Count);
+
         var context = new TripContext
         {
             UserPrompt = request.Prompt,
-            Cities = tripData.Locations,
+            Cities = mappedLocations,
             TripData = tripData,
             Attractions = attractions.Count == 0 ? null : attractions,
             Weather = weather.Count == 0 ? null : weather,
             NerSucceeded = true
         };
 
+        _logger.LogInformation("Requesting structured itinerary generation from LLM Service.");
         var llmResult = await _illmService.GenerateAsync(BuildGeneratePlanLlmPrompt(context), ct);
         if (llmResult.IsFailure)
         {
-            _logger.LogWarning("LLM generation failed: {Error}", llmResult.Error);
+            _logger.LogWarning("LLM Service generation failed: {Error}", llmResult.Error);
             return Result.Failure<TripPlanResponse>(llmResult.Error);
         }
 
+        _logger.LogInformation("Parsing structured LLM itinerary response.");
         var plan = TryParseLlmResponse(llmResult.Value);
         if (plan == null)
         {
-            _logger.LogWarning("First LLM parse failed, retrying...");
+            _logger.LogWarning("First structured LLM parse failed. Retrying generation...");
             var retryResult = await _illmService.GenerateAsync(BuildGeneratePlanLlmPrompt(context), ct);
             if (retryResult.IsSuccess)
                 plan = TryParseLlmResponse(retryResult.Value);
 
             if (plan == null)
+            {
+                _logger.LogError("Structured LLM parse failed after retry.");
                 return Result.Failure<TripPlanResponse>(Error.External("TripPlan.ParseFailed", "Failed to parse the generated itinerary after retry. Please try again."));
+            }
         }
 
+        _logger.LogInformation("Successfully parsed LLM plan. Patching missing fields, activity details, and destination photo.");
         PatchMissingFields(plan, context);
+        PatchActivityDetails(plan, context.Attractions);
+        PatchDestinationImage(plan, context.Attractions);
 
         plan.Prompt = request.Prompt;
+        _logger.LogInformation("=== [GENERATE TRIP PLAN SUCCESS] ===");
         return Result.Success(plan);
     }
     
@@ -288,6 +397,27 @@ public class TripGenerationService : ITripGenerationService
         }
         return data;
     }
+
+    private static string? GetCountryForCity(string city)
+    {
+        foreach (var kvp in CountryToCities)
+        {
+            if (kvp.Key.Length > 3 && kvp.Value.Contains(city, StringComparer.OrdinalIgnoreCase))
+            {
+                return kvp.Key;
+            }
+        }
+
+        foreach (var kvp in CountryToCities)
+        {
+            if (kvp.Value.Contains(city, StringComparer.OrdinalIgnoreCase))
+            {
+                return kvp.Key;
+            }
+        }
+
+        return null;
+    }
     
     private static string BuildGeneratePlanLlmPrompt(TripContext context)
     {
@@ -349,24 +479,23 @@ public class TripGenerationService : ITripGenerationService
 
 
             sb.AppendLine("=== AVAILABLE POINTS OF INTEREST ===");
-            sb.AppendLine($"You MUST include at least {MinPoisPerDay} of these POIs per day in your itinerary. Use the exact names and links provided.");
             if (context.Attractions != null)
             {
+                sb.AppendLine($"You MUST include at least {MinPoisPerDay} of these POIs per day in your itinerary. Use the exact names provided.");
                 for (var i = 0; i < context.Attractions.Count; i++)
                 {
                     var a = context.Attractions[i];
                     sb.AppendLine($"{i + 1}. {a.Name} (City: {a.City}, Category: {a.Category})");
-                    sb.AppendLine($"   Google Maps: {a.GoogleMapsLink}");
-                    if (!string.IsNullOrWhiteSpace(a.Website))
-                        sb.AppendLine($"   Website: {a.Website}");
+                    if (a.Rating.HasValue)
+                        sb.AppendLine($"   Rating: {a.Rating.Value}/5");
                 }
 
                 sb.AppendLine();
-                sb.AppendLine("IMPORTANT: The list above may NOT include every famous landmark. If a world-famous or iconic attraction for this destination is missing from the list above (e.g. Eiffel Tower for Paris, Colosseum for Rome, Pyramids for Cairo), you MUST still include it in the itinerary. Generate a Google Maps search link for it using the format: https://www.google.com/maps/search/?api=1&query=Place+Name,+City+Name and set website to null.");
+                sb.AppendLine("IMPORTANT: The list above may NOT include every famous landmark. If a world-famous or iconic attraction for this destination is missing from the list above (e.g. Eiffel Tower for Paris, Colosseum for Rome, Pyramids for Cairo), you MUST still include it in the itinerary.");
             }
             else
             {
-                sb.AppendLine("No pre-extracted points of interest are available. You MUST recommend the most famous and iconic landmarks and attractions for each destination city from your own knowledge. Generate a Google Maps search link for each using the format: https://www.google.com/maps/search/?api=1&query=Place+Name,+City+Name and set website to null.");
+                sb.AppendLine("No pre-extracted points of interest are available. You MUST recommend the most famous and iconic landmarks and attractions for each destination city from your own knowledge.");
             }
             sb.AppendLine();
             
@@ -391,11 +520,11 @@ public class TripGenerationService : ITripGenerationService
               ""dayNumber"": number,
               ""activities"": [
                 {
-                  ""name"": ""exact POI name from the list above when applicable"",
+                  ""name"": ""exact POI name from the list above when applicable, otherwise a well-known attraction name"",
                   ""city"": ""the city this activity is located in"",
                   ""description"": ""brief description of activity"",
-                  ""googleMapsLink"": ""exact Google Maps link from the list above. If not in the list, generate link format: https://www.google.com/maps/search/?api=1&query=Activity+Name,+City+Name (replace spaces with +)"",
-                  ""website"": ""exact website from the list above. If not in the list or no website is provided, set to null"",
+                  ""googleMapsLink"": null,
+                  ""website"": null,
                   ""approximateCost"": ""estimated cost for this activity (e.g. 'Free', '$10', '$150' for upscale dining, etc.)"",
                   ""type"": ""'Activity' or 'Transit'""
                 }
@@ -412,10 +541,10 @@ public class TripGenerationService : ITripGenerationService
         }");
         sb.AppendLine();
         sb.AppendLine("IMPORTANT RULES:");
-        sb.AppendLine($"1. Each day MUST have at least {MinPoisPerDay} activities/POIs.");
-        sb.AppendLine("2. NEVER repeat the same place or activity across different days. Each POI should appear ONLY ONCE in the entire itinerary.");
-        sb.AppendLine("3. Use the EXACT POI names, Google Maps links, and websites provided above.");
-        sb.AppendLine("4. For activities in the provided POI list, use the exact Google Maps link provided (which contains coordinates). For activities NOT in the provided POI list, you MUST generate a Google Maps search link by name in this exact format: https://www.google.com/maps/search/?api=1&query=Activity+Name,+City+Name (replace spaces with +). NEVER guess website URLs, set website to null if unknown.");
+        sb.AppendLine("1. Keep the JSON structure exact.");
+        sb.AppendLine("2. Always output null for both 'googleMapsLink' and 'website' properties in all activity objects. These will be mapped automatically by our system.");
+        sb.AppendLine("3. Divide the itinerary logically based on dates and weather conditions.");
+        sb.AppendLine("4. Keep descriptions brief and helpful.");
         sb.AppendLine("5. Consider weather when planning outdoor vs indoor activities.");
         sb.AppendLine("6. Provide logical sequencing of places based on context.");
         sb.AppendLine("7. if budget (in numeric format), currency, duration or group size are null, fill them with what you find suitable for the destination");
@@ -526,7 +655,25 @@ public class TripGenerationService : ITripGenerationService
     {
         var sanitized = Regex.Replace(json, @",\s*([}\]])", "$1");
         sanitized = Regex.Replace(sanitized, @"//.*?$", "", RegexOptions.Multiline);
-        return sanitized.Trim();
+        // Remove literal control characters (newlines/tabs) that the LLM might embed
+        // inside JSON string values — these cause JsonException on parse.
+        sanitized = sanitized.Replace("\r\n", " ").Replace("\r", " ");
+        // Collapse runs of newlines inside values into single spaces, but keep JSON structure.
+        // We do this by joining all lines and letting the JSON parser handle it.
+        var lines = sanitized.Split('\n');
+        var sb = new StringBuilder();
+        foreach (var line in lines)
+        {
+            sb.Append(line.TrimEnd());
+            // Only add a newline if the line ends with a JSON structural char or is a closing brace/bracket
+            var trimmed = line.TrimEnd();
+            if (trimmed.EndsWith(',') || trimmed.EndsWith('{') || trimmed.EndsWith('[') 
+                || trimmed.EndsWith('}') || trimmed.EndsWith(']') || trimmed.EndsWith(':'))
+                sb.Append('\n');
+            else
+                sb.Append(' ');
+        }
+        return sb.ToString().Trim();
     }
 
     private static void PatchMissingFields(TripPlanResponse plan, TripContext context)
@@ -541,6 +688,81 @@ public class TripGenerationService : ITripGenerationService
         {
             plan.Weather ??= context.Weather.FirstOrDefault(w => w != null);
         }
+    }
+
+    private static void PatchActivityDetails(TripPlanResponse plan, List<OsmAttractionDto>? attractions)
+    {
+        var photoLookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var mapsLinkLookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var websiteLookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        if (attractions != null)
+        {
+            foreach (var a in attractions)
+            {
+                if (!string.IsNullOrWhiteSpace(a.PhotoUrl) && !photoLookup.ContainsKey(a.Name))
+                    photoLookup[a.Name] = a.PhotoUrl;
+                if (!string.IsNullOrWhiteSpace(a.GoogleMapsLink) && !mapsLinkLookup.ContainsKey(a.Name))
+                    mapsLinkLookup[a.Name] = a.GoogleMapsLink;
+                if (!string.IsNullOrWhiteSpace(a.Website) && !websiteLookup.ContainsKey(a.Name))
+                    websiteLookup[a.Name] = a.Website;
+            }
+        }
+
+        foreach (var day in plan.Days)
+        {
+            foreach (var activity in day.Activities)
+            {
+                if (string.IsNullOrWhiteSpace(activity.ImageUrl) && photoLookup.TryGetValue(activity.Name, out var photoUrl))
+                {
+                    activity.ImageUrl = photoUrl;
+                }
+
+                if (string.IsNullOrWhiteSpace(activity.Website) && websiteLookup.TryGetValue(activity.Name, out var website))
+                {
+                    activity.Website = website;
+                }
+
+                if (mapsLinkLookup.TryGetValue(activity.Name, out var mapsLink) && !string.IsNullOrWhiteSpace(mapsLink))
+                {
+                    activity.GoogleMapsLink = mapsLink;
+                }
+                else if (string.IsNullOrWhiteSpace(activity.GoogleMapsLink) || activity.GoogleMapsLink == "null")
+                {
+                    var queryCity = activity.City ?? plan.City;
+                    activity.GoogleMapsLink = $"https://www.google.com/maps/search/?api=1&query={Uri.EscapeDataString(activity.Name + ", " + queryCity)}";
+                }
+            }
+        }
+    }
+
+    private static void PatchDestinationImage(TripPlanResponse plan, List<OsmAttractionDto>? attractions)
+    {
+        if (!string.IsNullOrWhiteSpace(plan.ImageUrl)) return;
+
+        var firstPhoto = attractions?
+            .FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.PhotoUrl));
+
+        if (firstPhoto != null)
+        {
+            plan.ImageUrl = firstPhoto.PhotoUrl;
+        }
+    }
+
+    private static int ParseDurationToDays(string? durationStr)
+    {
+        if (string.IsNullOrWhiteSpace(durationStr)) return 3;
+
+        var match = Regex.Match(durationStr, @"\d+");
+        if (match.Success && int.TryParse(match.Value, out var val))
+        {
+            if (durationStr.Contains("week", StringComparison.OrdinalIgnoreCase))
+                return val * 7;
+            if (durationStr.Contains("month", StringComparison.OrdinalIgnoreCase))
+                return val * 30;
+            return val;
+        }
+        return 3;
     }
 
     private sealed class TripContext

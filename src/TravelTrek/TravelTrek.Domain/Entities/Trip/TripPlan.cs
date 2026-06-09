@@ -8,9 +8,11 @@ public class TripPlan
     
     public string City { get; set; } = string.Empty;
     public string? Country { get; set; }
+    public string? Duration { get; set; }
     public decimal? Budget { get; set; }
     public string? Currency { get; set; }
     public string? GroupSize { get; set; }
+    public string? ImageUrl { get; set; }
     public WeatherSummary? Weather { get; set; }    
     public List<DayPlan> Days { get; set; } = new();
     

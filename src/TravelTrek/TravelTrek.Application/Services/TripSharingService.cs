@@ -110,9 +110,11 @@ public class TripSharingService : ITripSharingService
             Prompt = sourcePlan.Prompt,
             City = sourcePlan.City,
             Country = sourcePlan.Country,
+            Duration = sourcePlan.Duration,
             Budget = sourcePlan.Budget,
             Currency = sourcePlan.Currency,
             GroupSize = sourcePlan.GroupSize,
+            ImageUrl = sourcePlan.ImageUrl,
             GeneralAdvice = sourcePlan.GeneralAdvice,
             PackingTips = sourcePlan.PackingTips != null ? new List<string>(sourcePlan.PackingTips) : null,
             Weather = sourcePlan.Weather != null
@@ -135,7 +137,8 @@ public class TripSharingService : ITripSharingService
                     City = a.City,
                     Description = a.Description,
                     GoogleMapsLink = a.GoogleMapsLink,
-                    Website = a.Website
+                    Website = a.Website,
+                    ImageUrl = a.ImageUrl
                 }).ToList()
             }).ToList()
         };

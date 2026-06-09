@@ -8,7 +8,7 @@ using TravelTrek.Infrastructure.Data.Configurations;
 
 namespace TravelTrek.Infrastructure.Services.Osm;
 
-public class OsmService : IOsmService
+public class OsmService : IPoiService
 {
     private readonly HttpClient _httpClient;
     private readonly OsmApiOptions _options;

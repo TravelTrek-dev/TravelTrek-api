@@ -21,6 +21,8 @@ using TravelTrek.Infrastructure.Services;
 using TravelTrek.Infrastructure.Services.Weather;
 using TravelTrek.Infrastructure.Services.Ner;
 using TravelTrek.Infrastructure.Services.Osm;
+using TravelTrek.Infrastructure.Services.GooglePlaces;
+using TravelTrek.Infrastructure.Services.Poi;
 using TravelTrek.Infrastructure.Services.Ollama;
 using TravelTrek.Infrastructure.Services.Cache;
 using TravelTrek.Application.Services;
@@ -169,18 +171,33 @@ namespace TravelTrek.Infrastructure
 
             #endregion
 
-            #region OSM Service
+            #region POI Services (Google Places → OSM → LLM fallback)
 
+            // Google Places (primary)
+            services.AddOptionsWithValidateOnStart<GooglePlacesOptions>()
+                .Bind(configuration.GetSection(GooglePlacesOptions.SectionName))
+                .ValidateDataAnnotations();
+
+            services.AddHttpClient<GooglePlacesService>(client =>
+            {
+                client.DefaultRequestHeaders.Add("User-Agent", "TravelApp/1.0 (educational project)");
+                client.Timeout = TimeSpan.FromSeconds(15);
+            });
+
+            // OSM/Overpass (fallback)
             services.AddOptionsWithValidateOnStart<OsmApiOptions>()
                 .Bind(configuration.GetSection(OsmApiOptions.SectionName))
                 .ValidateDataAnnotations();
 
-            services.AddHttpClient<IOsmService, OsmService>(client =>
+            services.AddHttpClient<OsmService>(client =>
             {
                 client.DefaultRequestHeaders.Add("User-Agent", "TravelApp/1.0 (educational project)");
                 client.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.9");
-                client.Timeout = TimeSpan.FromSeconds(15);
+                client.Timeout = TimeSpan.FromSeconds(35);
             });
+
+            // Fallback chain: Google → OSM → empty (LLM generates)
+            services.AddScoped<IPoiService, FallbackPoiService>();
 
             #endregion
 

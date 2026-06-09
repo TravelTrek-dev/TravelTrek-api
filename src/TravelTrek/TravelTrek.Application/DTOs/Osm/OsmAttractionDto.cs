@@ -10,4 +10,7 @@ public class OsmAttractionDto
     public string? Website { get; set; }
     public string? Wikipedia { get; set; }
     public string? Wikidata { get; set; }
+    public string? PhotoUrl { get; set; }
+    public double? Rating { get; set; }
 }
+
