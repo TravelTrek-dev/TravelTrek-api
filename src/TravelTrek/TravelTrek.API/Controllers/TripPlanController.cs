@@ -32,7 +32,8 @@ namespace TravelTrek.API.Controllers
         [HttpPost("generate", Name = "GenerateTripPlan")]
         public async Task<IActionResult> GenerateTripPlan([FromBody] TripPlanRequest request, CancellationToken ct)
         {
-            var result = await _generationService.GenerateTripPlanAsync(request, ct);
+            var userId = GetUserId();
+            var result = await _generationService.GenerateTripPlanAsync(request, userId, ct);
             return ToActionResult(result);
         }
 

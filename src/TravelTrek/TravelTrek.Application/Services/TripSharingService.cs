@@ -113,6 +113,8 @@ public class TripSharingService : ITripSharingService
             Duration = sourcePlan.Duration,
             Budget = sourcePlan.Budget,
             Currency = sourcePlan.Currency,
+            UserCurrency = sourcePlan.UserCurrency,
+            ConversionRate = sourcePlan.ConversionRate,
             GroupSize = sourcePlan.GroupSize,
             ImageUrl = sourcePlan.ImageUrl,
             GeneralAdvice = sourcePlan.GeneralAdvice,

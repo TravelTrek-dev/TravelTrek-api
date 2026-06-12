@@ -16,6 +16,8 @@ public class TripPlanResponse
     public string? Duration { get; set; }
     public decimal? Budget { get; set; }
     public string? Currency { get; set; }
+    public string? UserCurrency { get; set; }
+    public decimal? ConversionRate { get; set; }
     public string? GroupSize { get; set; }
     public string? ImageUrl { get; set; }
     public WeatherSummaryDto? Weather { get; set; }
@@ -65,4 +67,5 @@ public class ActivityDto
     public string? City { get; set; }
     public string? ApproximateCost { get; set; }
     public string Type { get; set; } = "Activity";
+    public string? Time { get; set; }
 }

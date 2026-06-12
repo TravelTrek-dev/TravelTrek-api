@@ -1,5 +1,8 @@
+using System.Net.Http;
+using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using TravelTrek.Application.DTOs.Ner;
@@ -22,6 +25,8 @@ public class TripGenerationService : ITripGenerationService
     private readonly ITripPlanRepository _tripPlanRepository;
     private readonly AutoMapper.IMapper _mapper;
     private readonly ICacheService _cache;
+    private readonly IUserRepository _userRepository;
+    private readonly IHttpClientFactory _httpClientFactory;
     
     private const int MinPoisPerDay = 3;
     private const int DefaultPoiLimit = 20;
@@ -32,58 +37,19 @@ public class TripGenerationService : ITripGenerationService
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    private static readonly Dictionary<string, List<string>> CountryToCities = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["France"] = new() { "Paris", "Nice" },
-        ["United Kingdom"] = new() { "London", "Edinburgh" },
-        ["UK"] = new() { "London", "Edinburgh" },
-        ["Great Britain"] = new() { "London", "Edinburgh" },
-        ["England"] = new() { "London", "Manchester" },
-        ["Scotland"] = new() { "Edinburgh", "Glasgow" },
-        ["Ireland"] = new() { "Dublin", "Galway" },
-        ["Germany"] = new() { "Berlin", "Munich" },
-        ["Italy"] = new() { "Rome", "Florence" },
-        ["Spain"] = new() { "Madrid", "Barcelona" },
-        ["Japan"] = new() { "Tokyo", "Kyoto" },
-        ["Egypt"] = new() { "Cairo", "Luxor" },
-        ["United States"] = new() { "New York City", "Los Angeles" },
-        ["USA"] = new() { "New York City", "Los Angeles" },
-        ["US"] = new() { "New York City", "Los Angeles" },
-        ["United States of America"] = new() { "New York City", "Los Angeles" },
-        ["Canada"] = new() { "Toronto", "Vancouver" },
-        ["Australia"] = new() { "Sydney", "Melbourne" },
-        ["China"] = new() { "Beijing", "Shanghai" },
-        ["Brazil"] = new() { "Rio de Janeiro", "Sao Paulo" },
-        ["India"] = new() { "New Delhi", "Mumbai" },
-        ["South Korea"] = new() { "Seoul", "Busan" },
-        ["Turkey"] = new() { "Istanbul", "Cappadocia" },
-        ["Saudi Arabia"] = new() { "Riyadh", "Jeddah" },
-        ["United Arab Emirates"] = new() { "Dubai", "Abu Dhabi" },
-        ["UAE"] = new() { "Dubai", "Abu Dhabi" },
-        ["Greece"] = new() { "Athens", "Santorini" },
-        ["Netherlands"] = new() { "Amsterdam", "Rotterdam" },
-        ["Switzerland"] = new() { "Zurich", "Geneva" },
-        ["Sweden"] = new() { "Stockholm", "Gothenburg" },
-        ["Norway"] = new() { "Oslo", "Bergen" },
-        ["Denmark"] = new() { "Copenhagen", "Aarhus" },
-        ["Austria"] = new() { "Vienna", "Salzburg" },
-        ["Portugal"] = new() { "Lisbon", "Porto" },
-        ["Mexico"] = new() { "Mexico City", "Cancun" },
-        ["South Africa"] = new() { "Cape Town", "Johannesburg" },
-        ["Thailand"] = new() { "Bangkok", "Phuket" },
-        ["Singapore"] = new() { "Singapore" },
-        ["Malaysia"] = new() { "Kuala Lumpur", "Penang" },
-        ["Vietnam"] = new() { "Hanoi", "Ho Chi Minh City" },
-        ["Indonesia"] = new() { "Bali", "Jakarta" },
-        ["New Zealand"] = new() { "Auckland", "Queenstown" },
-        ["Argentina"] = new() { "Buenos Aires", "Bariloche" },
-        ["Chile"] = new() { "Santiago", "Valparaiso" },
-        ["Colombia"] = new() { "Bogota", "Medellin" },
-        ["Peru"] = new() { "Lima", "Cusco" },
-        ["Morocco"] = new() { "Marrakech", "Fes" },
-    };
 
-    public TripGenerationService(INerService nerService, IPoiService poiService, IOpenWeatherService weatherService, ILLMService illmService, ILogger<TripGenerationService> logger, ITripPlanRepository tripPlanRepository, AutoMapper.IMapper mapper, ICacheService cache)
+
+    public TripGenerationService(
+        INerService nerService, 
+        IPoiService poiService, 
+        IOpenWeatherService weatherService, 
+        ILLMService illmService, 
+        ILogger<TripGenerationService> logger, 
+        ITripPlanRepository tripPlanRepository, 
+        AutoMapper.IMapper mapper, 
+        ICacheService cache,
+        IUserRepository userRepository,
+        IHttpClientFactory httpClientFactory)
     {
         _nerService = nerService;
         _poiService = poiService;
@@ -93,9 +59,11 @@ public class TripGenerationService : ITripGenerationService
         _tripPlanRepository = tripPlanRepository;
         _mapper = mapper;
         _cache = cache;
+        _userRepository = userRepository;
+        _httpClientFactory = httpClientFactory;
     }
 
-    public async Task<Result<TripPlanResponse>> GenerateTripPlanAsync(TripPlanRequest request, CancellationToken ct = default)
+    public async Task<Result<TripPlanResponse>> GenerateTripPlanAsync(TripPlanRequest request, Guid userId, CancellationToken ct = default)
     {
         _logger.LogInformation("=== [GENERATE TRIP PLAN START] Prompt: '{Prompt}' ===", request.Prompt);
 
@@ -109,7 +77,9 @@ public class TripGenerationService : ITripGenerationService
             var promptOnlyContext = new TripContext { UserPrompt = request.Prompt, NerSucceeded = false};
 
             _logger.LogInformation("Requesting prompt-only itinerary generation from LLM Service.");
-            var promptOnlyLlmResult = await _illmService.GenerateAsync(BuildGeneratePlanLlmPrompt(promptOnlyContext), ct);
+            var fallbackPrompt = BuildGeneratePlanLlmPrompt(promptOnlyContext);
+            _logger.LogInformation("Exact prompt sent to LLM:\n{Prompt}", fallbackPrompt);
+            var promptOnlyLlmResult = await _illmService.GenerateAsync(fallbackPrompt, ct);
             if (promptOnlyLlmResult.IsFailure)
             {
                 _logger.LogWarning("Fallback LLM generation failed: {Error}", promptOnlyLlmResult.Error);
@@ -121,7 +91,7 @@ public class TripGenerationService : ITripGenerationService
             if (promptOnlyPlan == null)
             {
                 _logger.LogWarning("First fallback LLM parse failed, retrying generation...");
-                var retryResult = await _illmService.GenerateAsync(BuildGeneratePlanLlmPrompt(promptOnlyContext), ct);
+                var retryResult = await _illmService.GenerateAsync(fallbackPrompt, ct);
                 if (retryResult.IsSuccess)
                     promptOnlyPlan = TryParseLlmResponse(retryResult.Value);
 
@@ -134,6 +104,7 @@ public class TripGenerationService : ITripGenerationService
 
             _logger.LogInformation("=== [GENERATE TRIP PLAN SUCCESS (FALLBACK)] ===");
             promptOnlyPlan.Prompt = request.Prompt;
+            await PopulateCurrencyConversionAsync(promptOnlyPlan, userId, ct);
             return Result.Success(promptOnlyPlan);   
         }
 
@@ -151,6 +122,21 @@ public class TripGenerationService : ITripGenerationService
         {
             _logger.LogWarning("Could not extract any locations/cities from prompt: '{Prompt}'", request.Prompt);
             return Result.Failure<TripPlanResponse>(Error.Validation("TripPlan.NoCity", "Could not extract a destination city from your prompt. Please include a city name."));
+        }
+
+        if (tripData.Locations.Count > 3)
+        {
+            _logger.LogWarning("User attempted to plan a trip with {Count} cities, exceeding the limit of 3.", tripData.Locations.Count);
+            return Result.Failure<TripPlanResponse>(Error.Validation("TripPlan.TooManyCities", "You can only plan a trip for up to 3 cities at a time."));
+        }
+
+        var invalidLocations = tripData.Locations.Where(loc => loc.Count(char.IsLetter) < 2).ToList();
+        
+        if (invalidLocations.Count > 0)
+        {
+            _logger.LogWarning("Rejected invalid location name(s): [{Locations}]", string.Join(", ", invalidLocations));
+            return Result.Failure<TripPlanResponse>(Error.Validation("TripPlan.InvalidCity",
+                $"'{string.Join(", ", invalidLocations)}' does not appear to be a valid city or destination name. Please enter a real city name."));
         }
 
         _logger.LogInformation("NER parsed variables - Locations: [{Cities}], Duration: {Duration}, Budget: {Budget}, GroupSize: {GroupSize}",
@@ -184,6 +170,12 @@ public class TripGenerationService : ITripGenerationService
 
         mappedLocations = mappedLocations.Select(loc => loc.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
+        if (mappedLocations.Count > 3)
+        {
+            _logger.LogWarning("Mapped locations count {Count} exceeds the limit of 3.", mappedLocations.Count);
+            return Result.Failure<TripPlanResponse>(Error.Validation("TripPlan.TooManyCities", "You can only plan a trip for up to 3 cities at a time."));
+        }
+
         _logger.LogInformation("Final destination query list: [{Locations}]", string.Join(", ", mappedLocations));
 
         var durationStr = tripData.Durations.FirstOrDefault();
@@ -191,20 +183,47 @@ public class TripGenerationService : ITripGenerationService
         var poiLimit = Math.Clamp(days * 4, 10, 25);
         _logger.LogInformation("Calculated days={Days}, POI limit={PoiLimit} per city.", days, poiLimit);
 
-        _logger.LogInformation("Launching parallel POI & Weather fetch tasks for all mapped destinations.");
+        _logger.LogInformation("Launching parallel POI, Dining & Weather fetch tasks for all mapped destinations.");
         var osmTasks = mappedLocations.Select(city => _poiService.GetTopAttractionsAsync(city, poiLimit, ct)).ToList();
+        var diningTasks = mappedLocations.Select(city => _poiService.GetTopDiningAsync(city, poiLimit, ct)).ToList();
         var weatherTasks = mappedLocations.Select(city => GetWeatherForCityAsync(city, ct)).ToList();
         
-        await Task.WhenAll(osmTasks.Cast<Task>().Concat(weatherTasks));
-        _logger.LogInformation("Parallel POI & Weather fetch tasks completed.");
+        await Task.WhenAll(osmTasks.Cast<Task>().Concat(diningTasks.Cast<Task>()).Concat(weatherTasks));
+        _logger.LogInformation("Parallel POI, Dining & Weather fetch tasks completed.");
         
         var attractionsResults = osmTasks.Select(t => t.Result).ToArray();
+        var diningResults = diningTasks.Select(t => t.Result).ToArray();
         var weatherResults = weatherTasks.Select(t => t.Result).ToArray();
         
         var attractions = attractionsResults.Where(result => result.IsSuccess).SelectMany(result => result.Value).ToList();
+        var dining = diningResults.Where(result => result.IsSuccess).SelectMany(result => result.Value).ToList();
         var weather = weatherResults.Where(w => w != null).ToList();
 
-        _logger.LogInformation("Collected {AttractionCount} total attractions and {WeatherCount} weather states across destinations.", attractions.Count, weather.Count);
+        _logger.LogInformation("Collected {AttractionCount} total attractions, {DiningCount} dining options, and {WeatherCount} weather states across destinations.", attractions.Count, dining.Count, weather.Count);
+
+        if (attractions.Count == 0)
+        {
+            _logger.LogWarning("POI services failed to return any attractions for the destination cities: [{Cities}]", string.Join(", ", mappedLocations));
+            
+            var serviceError = attractionsResults.Select(r => r.Error).FirstOrDefault(e => e != Error.None);
+            if (serviceError != null)
+            {
+                if (serviceError.Code == "GooglePlaces.GeocodeFailed" || serviceError.Code == "Osm.GeocodeFailed")
+                {
+                    var invalidCity = mappedLocations.FirstOrDefault() ?? "the destination";
+                    var match = Regex.Match(serviceError.Description, @"Could not geocode '(.*?)'\.?");
+                    if (match.Success)
+                    {
+                        invalidCity = match.Groups[1].Value;
+                    }
+                    return Result.Failure<TripPlanResponse>(Error.Validation("TripPlan.InvalidCity",
+                        $"'{invalidCity}' does not appear to be a valid city or destination name. Please enter a real city name."));
+                }
+                return Result.Failure<TripPlanResponse>(serviceError);
+            }
+            
+            return Result.Failure<TripPlanResponse>(Error.Validation("TripPlan.InvalidCity", $"The destination '{string.Join(", ", mappedLocations)}' could not be found. Please check the spelling or try another city."));
+        }
 
         var context = new TripContext
         {
@@ -212,12 +231,15 @@ public class TripGenerationService : ITripGenerationService
             Cities = mappedLocations,
             TripData = tripData,
             Attractions = attractions.Count == 0 ? null : attractions,
+            Dining = dining.Count == 0 ? null : dining,
             Weather = weather.Count == 0 ? null : weather,
             NerSucceeded = true
         };
 
         _logger.LogInformation("Requesting structured itinerary generation from LLM Service.");
-        var llmResult = await _illmService.GenerateAsync(BuildGeneratePlanLlmPrompt(context), ct);
+        var llmPrompt = BuildGeneratePlanLlmPrompt(context);
+        _logger.LogInformation("Exact prompt sent to LLM:\n{Prompt}", llmPrompt);
+        var llmResult = await _illmService.GenerateAsync(llmPrompt, ct);
         if (llmResult.IsFailure)
         {
             _logger.LogWarning("LLM Service generation failed: {Error}", llmResult.Error);
@@ -229,7 +251,7 @@ public class TripGenerationService : ITripGenerationService
         if (plan == null)
         {
             _logger.LogWarning("First structured LLM parse failed. Retrying generation...");
-            var retryResult = await _illmService.GenerateAsync(BuildGeneratePlanLlmPrompt(context), ct);
+            var retryResult = await _illmService.GenerateAsync(llmPrompt, ct);
             if (retryResult.IsSuccess)
                 plan = TryParseLlmResponse(retryResult.Value);
 
@@ -246,6 +268,7 @@ public class TripGenerationService : ITripGenerationService
         PatchDestinationImage(plan, context.Attractions);
 
         plan.Prompt = request.Prompt;
+        await PopulateCurrencyConversionAsync(plan, userId, ct);
         _logger.LogInformation("=== [GENERATE TRIP PLAN SUCCESS] ===");
         return Result.Success(plan);
     }
@@ -266,7 +289,9 @@ public class TripGenerationService : ITripGenerationService
         
         var tripPlanJson = JsonSerializer.Serialize(tripPlanDto);
 
-        var llmResult = await _illmService.GenerateAsync(BuildRefinePlanLlmPrompt(tripPlanJson, request.UserPrompt), ct);
+        var refinePrompt = BuildRefinePlanLlmPrompt(tripPlanJson, request.UserPrompt);
+        _logger.LogInformation("Exact prompt sent to LLM (refine):\n{Prompt}", refinePrompt);
+        var llmResult = await _illmService.GenerateAsync(refinePrompt, ct);
         
         if (llmResult.IsFailure)
         {
@@ -277,7 +302,7 @@ public class TripGenerationService : ITripGenerationService
         if (plan == null)
         {
             _logger.LogWarning("First LLM parse failed (refine), retrying...");
-            var retryResult = await _illmService.GenerateAsync(BuildRefinePlanLlmPrompt(tripPlanJson, request.UserPrompt), ct);
+            var retryResult = await _illmService.GenerateAsync(refinePrompt, ct);
             if (retryResult.IsSuccess)
                 plan = TryParseLlmResponse(retryResult.Value);
 
@@ -286,6 +311,7 @@ public class TripGenerationService : ITripGenerationService
         }
 
         plan.Prompt = request.UserPrompt;
+        await PopulateCurrencyConversionAsync(plan, userId, ct);
         return Result.Success(plan);
     }
 
@@ -498,6 +524,24 @@ public class TripGenerationService : ITripGenerationService
                 sb.AppendLine("No pre-extracted points of interest are available. You MUST recommend the most famous and iconic landmarks and attractions for each destination city from your own knowledge.");
             }
             sb.AppendLine();
+
+            sb.AppendLine("=== AVAILABLE DINING OPTIONS (RESTAURANTS/CAFES/BARS) ===");
+            if (context.Dining != null && context.Dining.Count > 0)
+            {
+                sb.AppendLine("You MUST use ONLY the exact restaurant/cafe/bakery names from this list for the 'breakfast', 'lunch', and 'dinner' options under the 'meals' object. Assign them logically (e.g. cafe/bakery for breakfast, restaurant/cafe for lunch, and restaurant/bar for dinner). Do NOT invent any restaurant names.");
+                for (var i = 0; i < context.Dining.Count; i++)
+                {
+                    var d = context.Dining[i];
+                    sb.AppendLine($"{i + 1}. {d.Name} (City: {d.City}, Category: {d.Category})");
+                    if (d.Rating.HasValue)
+                        sb.AppendLine($"   Rating: {d.Rating.Value}/5");
+                }
+            }
+            else
+            {
+                sb.AppendLine("No pre-extracted dining options are available. Recommend popular restaurants or local dining spots matching the budget and destination city from your own knowledge.");
+            }
+            sb.AppendLine();
             
         }
         sb.AppendLine("=== OUTPUT FORMAT ===");
@@ -526,7 +570,8 @@ public class TripGenerationService : ITripGenerationService
                   ""googleMapsLink"": null,
                   ""website"": null,
                   ""approximateCost"": ""estimated cost for this activity (e.g. 'Free', '$10', '$150' for upscale dining, etc.)"",
-                  ""type"": ""'Activity' or 'Transit'""
+                  ""type"": ""'Activity' or 'Transit'"",
+                  ""time"": ""what time to start this activity (e.g. '09:00 AM', '02:00 PM', '07:30 PM')""
                 }
               ],
               ""meals"": {
@@ -547,12 +592,14 @@ public class TripGenerationService : ITripGenerationService
         sb.AppendLine("4. Keep descriptions brief and helpful.");
         sb.AppendLine("5. Consider weather when planning outdoor vs indoor activities.");
         sb.AppendLine("6. Provide logical sequencing of places based on context.");
-        sb.AppendLine("7. if budget (in numeric format), currency, duration or group size are null, fill them with what you find suitable for the destination");
+        sb.AppendLine("7. if budget (in numeric format) or currency are null or not specified in the user request, you MUST generate a suitable budget and set its currency to the local/national currency of the destination country (e.g. EUR for France, JPY for Japan, EGP for Egypt, GBP for United Kingdom, AED for United Arab Emirates). The budget numeric value MUST represent the amount in that local currency, not USD. If duration or group size are null, fill them with what you find suitable for the destination.");
         sb.AppendLine("8. Return ONLY the JSON, no other text.");
         sb.AppendLine("9. You MUST include activities from ALL the extracted destination cities. Divide the number of days equally among the cities if possible (e.g., for a 4-day trip to 2 cities, assign the first 2 days to the first city, and the next 2 days to the second city). Group days by city sequentially so the traveler does not jump back and forth between cities.");
         sb.AppendLine("10. Multi-City Transit Rule: For multi-city trips, when transitioning between different cities (e.g., Day 2 is Paris and Day 3 is Marseille), you MUST insert a transit block at the end of Day 2 or the start of Day 3. Set its \"type\" property to \"Transit\", \"name\" to something descriptive (e.g., \"Transit: Paris to Marseille by Train\"), \"city\" to the destination city, and \"description\" to practical advice (e.g., \"Board the high-speed TGV train from Gare de Lyon... duration 3 hours\"). Normal sightseeing/POIs MUST have \"type\" set to \"Activity\".");
         sb.AppendLine("11. Budget Allocation Rule: You MUST ensure that the sum of the 'approximateCost' values across all suggested activities and dining spots is highly reasonable and fits within the traveler's total budget. Tailor the experiences to match the budget tier (e.g. free/budget activities for low budgets, and luxury/premium dining for generous budgets).");
         sb.AppendLine("12. Famous Landmarks Rule: You MUST ensure that every world-famous, iconic landmark for the destination is included in the itinerary, even if it was not in the provided POI list. A trip to Paris without the Eiffel Tower, or Rome without the Colosseum, is unacceptable.");
+        sb.AppendLine("13. Activity Timing Rule: You MUST assign a realistic start time for each activity in the day (e.g., '09:00 AM', '11:30 AM', '02:00 PM', '05:00 PM', '08:00 PM'). Ensure the times are chronologically sequenced and leave reasonable gaps for travel, meals, and resting.");
+        sb.AppendLine("14. Dining Suggestion Rule: For the 'meals' object (breakfast, lunch, dinner), you MUST select the exact restaurant/cafe names from the 'AVAILABLE DINING OPTIONS' section instead of inventing/assuming them. Assign them logically based on the type (e.g. cafes for breakfast/lunch, restaurants for lunch/dinner).");
 
         return sb.ToString();
     }
@@ -632,6 +679,7 @@ public class TripGenerationService : ITripGenerationService
         }
     }
 
+    // extracts only the json
     private static string ExtractJson(string text)
     {
         var jsonStart = text.IndexOf("```json", StringComparison.OrdinalIgnoreCase);
@@ -651,12 +699,16 @@ public class TripGenerationService : ITripGenerationService
         return text;
     }
 
+    
+    // fix json body
     private static string SanitizeJson(string json)
     {
+        
+        // remove Trailing commas
         var sanitized = Regex.Replace(json, @",\s*([}\]])", "$1");
+        // remove comments (//)
         sanitized = Regex.Replace(sanitized, @"//.*?$", "", RegexOptions.Multiline);
-        // Remove literal control characters (newlines/tabs) that the LLM might embed
-        // inside JSON string values — these cause JsonException on parse.
+        // remove literal control characters (newlines/tabs) that the LLM might embed
         sanitized = sanitized.Replace("\r\n", " ").Replace("\r", " ");
         // Collapse runs of newlines inside values into single spaces, but keep JSON structure.
         // We do this by joining all lines and letting the JSON parser handle it.
@@ -680,8 +732,6 @@ public class TripGenerationService : ITripGenerationService
     {
         if (string.IsNullOrWhiteSpace(plan.City) && context.Cities != null) plan.City = string.Join(", ", context.Cities);
         if (string.IsNullOrWhiteSpace(plan.Duration) && context.TripData != null) plan.Duration = context.TripData.Durations.FirstOrDefault();
-        if (plan.Budget == null || plan.Budget == 0) plan.Budget = 2000m;
-        if (string.IsNullOrWhiteSpace(plan.Currency)) plan.Currency = "USD";
         if (string.IsNullOrWhiteSpace(plan.GroupSize) && context.TripData != null) plan.GroupSize = context.TripData.GroupSizes.FirstOrDefault();
         
         if (context.Weather != null)
@@ -771,9 +821,237 @@ public class TripGenerationService : ITripGenerationService
         public List<string>? Cities { get; init; }
         public ExtractedTripData? TripData { get; init; }
         public List<OsmAttractionDto>? Attractions { get; init; }
+        public List<OsmAttractionDto>? Dining { get; init; }
         public List<WeatherSummaryDto?>? Weather { get; init; }
         public bool NerSucceeded { get; set; }
     }
 
+    private static readonly Dictionary<string, string> CountryToCurrencyMap = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Egypt"] = "EGP",
+        ["United States"] = "USD",
+        ["USA"] = "USD",
+        ["US"] = "USD",
+        ["United Kingdom"] = "GBP",
+        ["UK"] = "GBP",
+        ["Germany"] = "EUR",
+        ["France"] = "EUR",
+        ["Italy"] = "EUR",
+        ["Spain"] = "EUR",
+        ["Netherlands"] = "EUR",
+        ["Austria"] = "EUR",
+        ["Portugal"] = "EUR",
+        ["Greece"] = "EUR",
+        ["Japan"] = "JPY",
+        ["Canada"] = "CAD",
+        ["Australia"] = "AUD",
+        ["China"] = "CNY",
+        ["Brazil"] = "BRL",
+        ["India"] = "INR",
+        ["South Korea"] = "KRW",
+        ["Turkey"] = "TRY",
+        ["Saudi Arabia"] = "SAR",
+        ["United Arab Emirates"] = "AED",
+        ["UAE"] = "AED",
+        ["Switzerland"] = "CHF",
+        ["Sweden"] = "SEK",
+        ["Norway"] = "NOK",
+        ["Denmark"] = "DKK",
+        ["Mexico"] = "MXN",
+        ["South Africa"] = "ZAR",
+        ["Thailand"] = "THB",
+        ["Singapore"] = "SGD",
+        ["Malaysia"] = "MYR",
+        ["Vietnam"] = "VND",
+        ["Indonesia"] = "IDR",
+        ["New Zealand"] = "NZD",
+        ["Argentina"] = "ARS",
+        ["Chile"] = "CLP",
+        ["Colombia"] = "COP",
+        ["Peru"] = "PEN",
+        ["Morocco"] = "MAD"
+    };
+
+    private string GetCurrencyForCountry(string? countryName)
+    {
+        if (string.IsNullOrWhiteSpace(countryName))
+            return "USD";
+
+        if (CountryToCurrencyMap.TryGetValue(countryName.Trim(), out var currency))
+            return currency;
+
+        return "USD";
+    }
+
+    private class ExchangeRateResponse
+    {
+        [JsonPropertyName("result")]
+        public string Result { get; set; } = string.Empty;
+
+        [JsonPropertyName("base_code")]
+        public string BaseCode { get; set; } = string.Empty;
+
+        [JsonPropertyName("rates")]
+        public Dictionary<string, double>? Rates { get; set; }
+    }
+
+    private async Task<decimal?> GetExchangeRateAsync(string fromCurrency, string toCurrency, CancellationToken ct)
+    {
+        if (string.Equals(fromCurrency, toCurrency, StringComparison.OrdinalIgnoreCase))
+            return 1.0m;
+
+        try
+        {
+            var cacheKey = $"exrate:{fromCurrency.ToUpperInvariant()}:{toCurrency.ToUpperInvariant()}";
+            var cachedRate = await _cache.GetAsync<decimal?>(cacheKey, ct);
+            if (cachedRate.HasValue)
+            {
+                return cachedRate.Value;
+            }
+
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(5);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("TravelTrek/1.0");
+            client.DefaultRequestVersion = System.Net.HttpVersion.Version11;
+            client.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
+
+            var response = await client.GetFromJsonAsync<ExchangeRateResponse>(
+                $"https://open.er-api.com/v6/latest/{fromCurrency.ToUpperInvariant()}",
+                ct);
+
+            if (response != null && response.Result?.Equals("success", StringComparison.OrdinalIgnoreCase) == true && response.Rates != null)
+            {
+                if (response.Rates.TryGetValue(toCurrency.ToUpperInvariant(), out var rateValue))
+                {
+                    var rate = (decimal)rateValue;
+                    await _cache.SetAsync(cacheKey, (decimal?)rate, TimeSpan.FromHours(12), ct);
+                    return rate;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to fetch exchange rate from {From} to {To}", fromCurrency, toCurrency);
+        }
+
+        return null;
+    }
+
+    private async Task PopulateCurrencyConversionAsync(TripPlanResponse plan, Guid userId, CancellationToken ct)
+    {
+        try
+        {
+            var user = await _userRepository.GetByIdAsync(userId);
+            var userCountry = user?.Country;
+            var userCurrency = GetCurrencyForCountry(userCountry);
+
+            var destinationCurrency = plan.Currency;
+            if (string.IsNullOrWhiteSpace(destinationCurrency))
+            {
+                string? destinationCountry = plan.Country;
+                if (string.IsNullOrWhiteSpace(destinationCountry) && !string.IsNullOrWhiteSpace(plan.City))
+                {
+                    var firstCity = plan.City.Split(',').FirstOrDefault()?.Trim();
+                    if (!string.IsNullOrWhiteSpace(firstCity))
+                    {
+                        destinationCountry = GetCountryForCity(firstCity);
+                    }
+                }
+
+                destinationCurrency = !string.IsNullOrWhiteSpace(destinationCountry)
+                    ? GetCurrencyForCountry(destinationCountry)
+                    : "USD";
+
+                plan.Currency = destinationCurrency;
+            }
+
+            if (plan.Budget == null || plan.Budget == 0)
+            {
+                if (string.Equals(destinationCurrency, "USD", StringComparison.OrdinalIgnoreCase))
+                {
+                    plan.Budget = 2000m;
+                }
+                else
+                {
+                    var usdToDestRate = await GetExchangeRateAsync("USD", destinationCurrency, ct);
+                    if (usdToDestRate.HasValue)
+                    {
+                        plan.Budget = Math.Round(2000m * usdToDestRate.Value, 2);
+                    }
+                    else
+                    {
+                        plan.Budget = 2000m;
+                    }
+                }
+            }
+
+            plan.UserCurrency = userCurrency;
+
+            var rate = await GetExchangeRateAsync(destinationCurrency, userCurrency, ct);
+            plan.ConversionRate = rate;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to populate currency conversion for user {UserId}", userId);
+        }
+        finally
+        {
+            if (string.IsNullOrWhiteSpace(plan.Currency)) plan.Currency = "USD";
+            if (plan.Budget == null || plan.Budget == 0) plan.Budget = 2000m;
+        }
+    }
+
+    
+    
+        private static readonly Dictionary<string, List<string>> CountryToCities = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["France"] = new() { "Paris", "Nice" },
+        ["United Kingdom"] = new() { "London", "Edinburgh" },
+        ["UK"] = new() { "London", "Edinburgh" },
+        ["Great Britain"] = new() { "London", "Edinburgh" },
+        ["England"] = new() { "London", "Manchester" },
+        ["Scotland"] = new() { "Edinburgh", "Glasgow" },
+        ["Ireland"] = new() { "Dublin", "Galway" },
+        ["Germany"] = new() { "Berlin", "Munich" },
+        ["Italy"] = new() { "Rome", "Florence" },
+        ["Spain"] = new() { "Madrid", "Barcelona" },
+        ["Japan"] = new() { "Tokyo", "Kyoto" },
+        ["Egypt"] = new() { "Cairo", "Luxor" },
+        ["United States"] = new() { "New York City", "Los Angeles" },
+        ["USA"] = new() { "New York City", "Los Angeles" },
+        ["US"] = new() { "New York City", "Los Angeles" },
+        ["United States of America"] = new() { "New York City", "Los Angeles" },
+        ["Canada"] = new() { "Toronto", "Vancouver" },
+        ["Australia"] = new() { "Sydney", "Melbourne" },
+        ["China"] = new() { "Beijing", "Shanghai" },
+        ["Brazil"] = new() { "Rio de Janeiro", "Sao Paulo" },
+        ["India"] = new() { "New Delhi", "Mumbai" },
+        ["South Korea"] = new() { "Seoul", "Busan" },
+        ["Turkey"] = new() { "Istanbul", "Cappadocia" },
+        ["Saudi Arabia"] = new() { "Riyadh", "Jeddah" },
+        ["United Arab Emirates"] = new() { "Dubai", "Abu Dhabi" },
+        ["UAE"] = new() { "Dubai", "Abu Dhabi" },
+        ["Greece"] = new() { "Athens", "Santorini" },
+        ["Netherlands"] = new() { "Amsterdam", "Rotterdam" },
+        ["Switzerland"] = new() { "Zurich", "Geneva" },
+        ["Sweden"] = new() { "Stockholm", "Gothenburg" },
+        ["Norway"] = new() { "Oslo", "Bergen" },
+        ["Denmark"] = new() { "Copenhagen", "Aarhus" },
+        ["Austria"] = new() { "Vienna", "Salzburg" },
+        ["Portugal"] = new() { "Lisbon", "Porto" },
+        ["Mexico"] = new() { "Mexico City", "Cancun" },
+        ["South Africa"] = new() { "Cape Town", "Johannesburg" },
+        ["Thailand"] = new() { "Bangkok", "Phuket" },
+        ["Singapore"] = new() { "Singapore" },
+        ["Malaysia"] = new() { "Kuala Lumpur", "Penang" },
+        ["Vietnam"] = new() { "Hanoi", "Ho Chi Minh City" },
+        ["Indonesia"] = new() { "Bali", "Jakarta" },
+        ["New Zealand"] = new() { "Auckland", "Queenstown" },
+        ["Argentina"] = new() { "Buenos Aires", "Bariloche" },
+        ["Chile"] = new() { "Santiago", "Valparaiso" },
+        ["Colombia"] = new() { "Bogota", "Medellin" },
+        ["Peru"] = new() { "Lima", "Cusco" },
+        ["Morocco"] = new() { "Marrakech", "Fes" },
+    };
     #endregion
 }

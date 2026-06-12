@@ -24,7 +24,8 @@ namespace TravelTrek.API.Controllers
         [HttpPost("register", Name = "Register")]
         public async Task<IActionResult> Register([FromBody] RegisterRequest request)
         {
-            var result = await _authService.RegisterAsync(request);
+            var ipAddress = GetClientIp();
+            var result = await _authService.RegisterAsync(request, ipAddress);
             return ToActionResult(result);
         }
 
@@ -46,7 +47,8 @@ namespace TravelTrek.API.Controllers
         [HttpPost("google", Name = "GoogleLogin")]
         public async Task<IActionResult> Google([FromBody] SignupWithGoogleRequest request)
         {
-            var result = await _authService.SignupWithGoogleAsync(request);
+            var ipAddress = GetClientIp();
+            var result = await _authService.SignupWithGoogleAsync(request, ipAddress);
             return ToActionResult(result);
         }
 
@@ -145,6 +147,16 @@ namespace TravelTrek.API.Controllers
         {
             var result = await _authService.ResetPasswordAsync(request);
             return ToActionResult(result);
+        }
+
+        private string? GetClientIp()
+        {
+            var ip = HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+            if (string.IsNullOrEmpty(ip))
+            {
+                ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+            }
+            return ip;
         }
     }
 }

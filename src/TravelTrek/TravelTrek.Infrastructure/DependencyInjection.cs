@@ -24,6 +24,7 @@ using TravelTrek.Infrastructure.Services.Osm;
 using TravelTrek.Infrastructure.Services.GooglePlaces;
 using TravelTrek.Infrastructure.Services.Poi;
 using TravelTrek.Infrastructure.Services.Ollama;
+using TravelTrek.Infrastructure.Services.Llm;
 using TravelTrek.Infrastructure.Services.Cache;
 using TravelTrek.Application.Services;
 
@@ -138,6 +139,10 @@ namespace TravelTrek.Infrastructure
             services.AddScoped<ITokenService, TokenService>();
             services.AddScoped<IAuthService, AuthService>();
             services.AddScoped<IEmailService, EmailService>();
+            services.AddHttpClient<IIpGeolocationService, IpGeolocationService>(client =>
+            {
+                client.Timeout = TimeSpan.FromSeconds(5);
+            });
 
             #endregion
 
@@ -201,18 +206,18 @@ namespace TravelTrek.Infrastructure
 
             #endregion
 
-            #region OpenAI LLM
+            #region Cerebras LLM
 
-            services.AddOptionsWithValidateOnStart<OpenAIApiOptions>()
-                .Bind(configuration.GetSection(OpenAIApiOptions.SectionName))
+            services.AddOptionsWithValidateOnStart<CerebrasApiOptions>()
+                .Bind(configuration.GetSection(CerebrasApiOptions.SectionName))
                 .ValidateDataAnnotations();
 
-            services.AddHttpClient<ILLMService, OpenAIService>(client =>
+            services.AddHttpClient<ILLMService, CerebrasService>(client =>
                 {
-                    client.BaseAddress = new Uri(configuration[$"{OpenAIApiOptions.SectionName}:BaseUrl"]!);
+                    client.BaseAddress = new Uri(configuration[$"{CerebrasApiOptions.SectionName}:BaseUrl"]!);
                     client.Timeout = TimeSpan.FromSeconds(60);
                     client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
-                        "Bearer", configuration[$"{OpenAIApiOptions.SectionName}:ApiKey"]!);
+                        "Bearer", configuration[$"{CerebrasApiOptions.SectionName}:ApiKey"]!);
                 })
                 .AddStandardResilienceHandler(options =>
                 {

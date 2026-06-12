@@ -24,6 +24,7 @@ namespace TravelTrek.Infrastructure.Services
         private readonly GoogleSettings _googleSettings;
         private readonly ILogger<AuthService> _logger;
         private readonly IEmailService _emailService;
+        private readonly IIpGeolocationService _ipGeolocationService;
 
         public AuthService(
             UserManager<User> userManager,
@@ -34,7 +35,8 @@ namespace TravelTrek.Infrastructure.Services
             IUserRepository userRepository,
             IOptions<GoogleSettings> googleSettings,
             ILogger<AuthService> logger,
-            IEmailService emailService)
+            IEmailService emailService,
+            IIpGeolocationService ipGeolocationService)
         {
             _userManager = userManager;
             _tokenService = tokenService;
@@ -45,6 +47,7 @@ namespace TravelTrek.Infrastructure.Services
             _googleSettings = googleSettings.Value;
             _logger = logger;
             _emailService = emailService;
+            _ipGeolocationService = ipGeolocationService;
         }
 
         public async Task<Result<AuthResponse>> LoginAsync(LoginRequest request)
@@ -87,7 +90,7 @@ namespace TravelTrek.Infrastructure.Services
             return await GenerateAuthResponseAsync(user);
         }
 
-        public async Task<Result<AuthResponse>> RegisterAsync(RegisterRequest request)
+        public async Task<Result<AuthResponse>> RegisterAsync(RegisterRequest request, string? ipAddress)
         {
             var existingUser = await _userManager.FindByEmailAsync(request.Email);
             if (existingUser != null)
@@ -96,11 +99,14 @@ namespace TravelTrek.Infrastructure.Services
                 return Result.Failure<AuthResponse>(Error.Conflict("Auth.EmailTaken", "A user with this email already exists."));
             }
 
+            var country = await _ipGeolocationService.GetCountryByIpAsync(ipAddress);
+
             var user = new User
             {
                 Email = request.Email,
                 UserName = request.Email,
                 FullName = request.FullName,
+                Country = country,
                 EmailConfirmed = false
             };
 
@@ -121,7 +127,7 @@ namespace TravelTrek.Infrastructure.Services
             return Result.Failure<AuthResponse>(Error.Validation("Auth.EmailConfirmationRequired", "Registration successful. Please check your email to confirm your account."));
         }
 
-        public async Task<Result<AuthResponse>> SignupWithGoogleAsync(SignupWithGoogleRequest request)
+        public async Task<Result<AuthResponse>> SignupWithGoogleAsync(SignupWithGoogleRequest request, string? ipAddress)
         {
             try
             {
@@ -156,23 +162,33 @@ namespace TravelTrek.Infrastructure.Services
                         return Result.Failure<AuthResponse>(Error.Forbidden("Auth.AccountDeactivated", "This account has been deactivated."));
                     }
 
-                    if (existingUser.GoogleId == null)
+                    if (existingUser.GoogleId == null || existingUser.Country == null)
                     {
-                        _logger.LogInformation("Google sign-in — linked existing account. Email: {Email}, UserId: {UserId}",
+                        _logger.LogInformation("Google sign-in — updating details on existing account. Email: {Email}, UserId: {UserId}",
                             payload.Email, existingUser.Id);
-                        existingUser.GoogleId = payload.Subject;
+                        
+                        existingUser.GoogleId ??= payload.Subject;
                         existingUser.ProfilePictureUrl ??= payload.Picture;
+                        
+                        if (existingUser.Country == null)
+                        {
+                            existingUser.Country = await _ipGeolocationService.GetCountryByIpAsync(ipAddress);
+                        }
+                        
                         await _userManager.UpdateAsync(existingUser);
                     }
 
                     return await GenerateAuthResponseAsync(existingUser);
                 }
 
+                var country = await _ipGeolocationService.GetCountryByIpAsync(ipAddress);
+
                 var user = new User
                 {
                     Email = payload.Email,
                     UserName = payload.Email,
                     FullName = payload.Name,
+                    Country = country,
                     EmailConfirmed = true,
                     ProfilePictureUrl = payload.Picture,
                     GoogleId = payload.Subject
@@ -347,7 +363,7 @@ namespace TravelTrek.Infrastructure.Services
             if (user is null)
             {
                 _logger.LogWarning("Resend confirmation — email not found. Email: {Email}", email);
-                return Result.Success();
+                return Result.Failure(Error.NotFound("Auth.UserNotFound", "User not found."));
             }
 
             if (user.EmailConfirmed)

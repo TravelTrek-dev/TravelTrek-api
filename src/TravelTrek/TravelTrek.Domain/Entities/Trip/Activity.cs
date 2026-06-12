@@ -12,6 +12,7 @@ public class Activity
     public string? City { get; set; }
     public string? ApproximateCost { get; set; }
     public string Type { get; set; } = "Activity";
+    public string? Time { get; set; }
     
     public DayPlan DayPlan { get; set; } = null!;
 }

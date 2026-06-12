@@ -64,6 +64,10 @@ public class GooglePlacesService : IPoiService
         ["stadium"] = "Stadium",
         ["shopping_mall"] = "Shopping",
         ["market"] = "Market",
+        ["restaurant"] = "Restaurant",
+        ["cafe"] = "Cafe",
+        ["bar"] = "Bar",
+        ["bakery"] = "Bakery",
     };
 
     public GooglePlacesService(HttpClient httpClient, IOptions<GooglePlacesOptions> options, ILogger<GooglePlacesService> logger, ICacheService cache)
@@ -155,17 +159,30 @@ public class GooglePlacesService : IPoiService
             }
         }
 
-        // 3. fallback:
         if (searchResult.IsSuccess && searchResult.Value.Count > 0)
         {
             var fallbackPlace = searchResult.Value[0];
-            _logger.LogWarning("Could not find a strict city/political type for '{City}'. Falling back to first search result: '{DisplayName}' at ({Lat}, {Lon})",
-                cityName, fallbackPlace.DisplayName, fallbackPlace.Lat, fallbackPlace.Lon);
-            await _cache.SetAsync(geoCacheKey, new[] { fallbackPlace.Lat, fallbackPlace.Lon }, TimeSpan.FromDays(7), ct);
-            return Result.Success((fallbackPlace.Lat, fallbackPlace.Lon));
+            var queryNormalized = cityName.Split(',')[0].Trim();
+            var displayNormalized = fallbackPlace.DisplayName.Trim();
+            
+            // Check if the query and display name share meaningful overlap
+            var hasOverlap = displayNormalized.Contains(queryNormalized, StringComparison.OrdinalIgnoreCase)
+                             || queryNormalized.Contains(displayNormalized, StringComparison.OrdinalIgnoreCase)
+                             || fallbackPlace.FormattedAddress.Contains(queryNormalized, StringComparison.OrdinalIgnoreCase);
+
+            if (hasOverlap)
+            {
+                _logger.LogWarning("Could not find a strict city/political type for '{City}'. Falling back to matched result: '{DisplayName}' at ({Lat}, {Lon})",
+                    cityName, fallbackPlace.DisplayName, fallbackPlace.Lat, fallbackPlace.Lon);
+                await _cache.SetAsync(geoCacheKey, new[] { fallbackPlace.Lat, fallbackPlace.Lon }, TimeSpan.FromDays(7), ct);
+                return Result.Success((fallbackPlace.Lat, fallbackPlace.Lon));
+            }
+
+            _logger.LogWarning("Rejecting geocoding fallback for '{City}': first result '{DisplayName}' does not match the query.",
+                cityName, fallbackPlace.DisplayName);
         }
 
-        return Result.Failure<(double, double)>(Error.NotFound("GooglePlaces.GeocodeFailed", $"Could not geocode '{cityName}'."));
+        return Result.Failure<(double, double)>(Error.Validation("TripPlan.InvalidCity", $"'{cityName}' is not a valid city name"));
     }
 
     private async Task<Result<List<GeocodedPlace>>> SearchPlacesAsync(string query, CancellationToken ct)
@@ -409,6 +426,159 @@ public class GooglePlacesService : IPoiService
             }
         }
         return null;
+    }
+
+    public async Task<Result<List<OsmAttractionDto>>> GetTopDiningAsync(string cityName, int limit = 40, CancellationToken ct = default)
+    {
+        var cacheKey = $"dining:{cityName.ToLowerInvariant().Trim()}:{limit}";
+
+        var cached = await _cache.GetAsync<List<OsmAttractionDto>>(cacheKey, ct);
+        if (cached != null)
+        {
+            _logger.LogInformation("Cache HIT for dining of '{City}' (limit={Limit}). Returning cached results.", cityName, limit);
+            return Result.Success(cached);
+        }
+
+        _logger.LogInformation("Cache MISS for dining of '{City}' (limit={Limit}). Initiating Google Places retrieval.", cityName, limit);
+
+        var coordsResult = await GeocodeCityAsync(cityName, ct);
+        if (coordsResult.IsFailure)
+        {
+            _logger.LogError("Failed to geocode city '{City}' via Google Places for dining.", cityName);
+            return Result.Failure<List<OsmAttractionDto>>(coordsResult.Error);
+        }
+
+        var (lat, lon) = coordsResult.Value;
+        _logger.LogInformation("Geocoded '{City}' to ({Lat}, {Lon}) for dining", cityName, lat, lon);
+
+        var dining = await SearchNearbyDiningAsync(cityName, lat, lon, limit, ct);
+
+        if (dining.Count == 0)
+        {
+            _logger.LogWarning("Google Places returned 0 dining places for '{City}'.", cityName);
+            return Result.Failure<List<OsmAttractionDto>>(Error.External("GetTopDining.External", $"No dining places found for '{cityName}' via Google Places."));
+        }
+
+        _logger.LogInformation("Successfully fetched {Count} dining places from Google Places for '{City}'. Saving to cache.", dining.Count, cityName);
+        await _cache.SetAsync(cacheKey, dining, TimeSpan.FromHours(24), ct);
+        return Result.Success(dining);
+    }
+
+    private async Task<List<OsmAttractionDto>> SearchNearbyDiningAsync(string cityName, double lat, double lon, int limit, CancellationToken ct)
+    {
+        var dining = new List<OsmAttractionDto>();
+
+        try
+        {
+            _logger.LogInformation("Sending POST to Google Places Nearby Search (Dining): '{Url}' | Center: ({Lat}, {Lon}) | Radius: 15km", NearbySearchUrl, lat, lon);
+            var maxResults = Math.Min(limit, 20);
+
+            var requestBody = new
+            {
+                includedTypes = new[]
+                {
+                    "restaurant", "cafe", "bar", "bakery"
+                },
+                maxResultCount = maxResults,
+                rankPreference = "POPULARITY",
+                locationRestriction = new
+                {
+                    circle = new
+                    {
+                        center = new
+                        {
+                            latitude = lat,
+                            longitude = lon
+                        },
+                        radius = 15000.0 
+                    }
+                }
+            };
+
+            var json = JsonSerializer.Serialize(requestBody, JsonOptions);
+            using var request = new HttpRequestMessage(HttpMethod.Post, NearbySearchUrl)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            };
+            request.Headers.Add("X-Goog-Api-Key", _options.ApiKey);
+            request.Headers.Add("X-Goog-FieldMask", NearbyFieldMask);
+
+            var response = await _httpClient.SendAsync(request, ct);
+            var responseStr = await response.Content.ReadAsStringAsync(ct);
+
+            _logger.LogInformation("Google Places Nearby Search (Dining) responded with status: {StatusCode}", response.StatusCode);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Google Places Nearby Search (Dining) returned {Status}: {Body}", response.StatusCode, responseStr);
+                return dining;
+            }
+
+            using var doc = JsonDocument.Parse(responseStr);
+            if (!doc.RootElement.TryGetProperty("places", out var places))
+            {
+                return dining;
+            }
+
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var place in places.EnumerateArray())
+            {
+                var name = GetDisplayName(place);
+                if (string.IsNullOrWhiteSpace(name) || name.Length < 3 || seen.Contains(name))
+                    continue;
+
+                seen.Add(name);
+
+                var rating = place.TryGetProperty("rating", out var ratingProp) ? ratingProp.GetDouble() : 0;
+                var ratingCount = place.TryGetProperty("userRatingCount", out var rcProp) ? rcProp.GetInt32() : 0;
+
+                var score = (int)(rating * 2) + (ratingCount > 1000 ? 5 : ratingCount > 100 ? 3 : 1);
+
+                var category = GetCategory(place);
+                if (category == "Attraction")
+                {
+                    category = "Restaurant"; // Fallback to Restaurant for dining search
+                }
+                var website = place.TryGetProperty("websiteUri", out var wsProp) ? wsProp.GetString() : null;
+                var googleMapsLink = place.TryGetProperty("googleMapsUri", out var gmProp)
+                    ? gmProp.GetString() ?? BuildGoogleMapsLink(lat, lon)
+                    : BuildGoogleMapsLink(lat, lon);
+
+                var photoUrl = GetPhotoUrl(place);
+
+                var placeLat = lat;
+                var placeLon = lon;
+                if (place.TryGetProperty("location", out var loc))
+                {
+                    placeLat = loc.TryGetProperty("latitude", out var pLat) ? pLat.GetDouble() : lat;
+                    placeLon = loc.TryGetProperty("longitude", out var pLon) ? pLon.GetDouble() : lon;
+                }
+
+                if (googleMapsLink == BuildGoogleMapsLink(lat, lon))
+                {
+                    googleMapsLink = BuildGoogleMapsLink(placeLat, placeLon);
+                }
+
+                dining.Add(new OsmAttractionDto
+                {
+                    Name = name,
+                    City = cityName,
+                    Category = category,
+                    Score = score,
+                    GoogleMapsLink = googleMapsLink,
+                    Website = website,
+                    PhotoUrl = photoUrl,
+                    Rating = rating > 0 ? rating : null
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error fetching nearby dining for '{City}'.", cityName);
+        }
+
+        return dining.OrderByDescending(a => a.Score).Take(limit).ToList();
     }
 
     private static string BuildGoogleMapsLink(double lat, double lon)
