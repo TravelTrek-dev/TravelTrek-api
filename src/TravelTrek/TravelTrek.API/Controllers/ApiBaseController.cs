@@ -13,7 +13,6 @@ namespace TravelTrek.API.Controllers
             if (result.IsSuccess)
                 return Ok(result);
 
-            // Handle multiple validation errors
             if (result is IValidationResult validationResult && validationResult.Errors.Length > 0)
             {
                 return StatusCode(GetStatusCode(result.Error), new
@@ -30,7 +29,6 @@ namespace TravelTrek.API.Controllers
                 });
             }
 
-            // Single error
             return StatusCode(GetStatusCode(result.Error), new
             {
                 code = result.Error.Code,

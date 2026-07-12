@@ -23,7 +23,6 @@ using TravelTrek.Infrastructure.Services.Ner;
 using TravelTrek.Infrastructure.Services.Osm;
 using TravelTrek.Infrastructure.Services.GooglePlaces;
 using TravelTrek.Infrastructure.Services.Poi;
-using TravelTrek.Infrastructure.Services.Ollama;
 using TravelTrek.Infrastructure.Services.Llm;
 using TravelTrek.Infrastructure.Services.Cache;
 using TravelTrek.Application.Services;
@@ -206,18 +205,16 @@ namespace TravelTrek.Infrastructure
 
             #endregion
 
-            #region Cerebras LLM
+            #region Gemini LLM
 
-            services.AddOptionsWithValidateOnStart<CerebrasApiOptions>()
-                .Bind(configuration.GetSection(CerebrasApiOptions.SectionName))
+            services.AddOptionsWithValidateOnStart<GeminiApiOptions>()
+                .Bind(configuration.GetSection(GeminiApiOptions.SectionName))
                 .ValidateDataAnnotations();
 
-            services.AddHttpClient<ILLMService, CerebrasService>(client =>
+            services.AddHttpClient<ILLMService, GeminiService>(client =>
                 {
-                    client.BaseAddress = new Uri(configuration[$"{CerebrasApiOptions.SectionName}:BaseUrl"]!);
+                    client.BaseAddress = new Uri(configuration[$"{GeminiApiOptions.SectionName}:BaseUrl"]!);
                     client.Timeout = TimeSpan.FromSeconds(60);
-                    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
-                        "Bearer", configuration[$"{CerebrasApiOptions.SectionName}:ApiKey"]!);
                 })
                 .AddStandardResilienceHandler(options =>
                 {
