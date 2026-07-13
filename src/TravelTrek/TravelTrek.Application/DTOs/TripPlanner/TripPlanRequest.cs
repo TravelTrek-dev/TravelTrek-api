@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace TravelTrek.Application.DTOs.TripPlanner;
 
-public class TripPlanRequest
+public record TripPlanRequest
 {
     [Required(ErrorMessage = "A trip description prompt is required.")]
     [MinLength(3, ErrorMessage = "Prompt must be at least 10 characters.")]

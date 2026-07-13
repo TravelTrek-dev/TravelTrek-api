@@ -107,11 +107,11 @@ public class OsmService : IPoiService
         return Result.Failure<CityCoordinates>(Error.NotFound("OsmService.GeocodeFailed", $"Failed to geocode city '{cityName}' using all available services."));
     }
  
-    public async Task<Result<List<OsmAttractionDto>>> GetTopAttractionsAsync(string cityName, int limit = 40, CancellationToken ct = default)
+    public async Task<Result<List<PoiDto>>> GetTopAttractionsAsync(string cityName, int limit = 40, CancellationToken ct = default)
     {
         var cacheKey = $"poi:{cityName.ToLowerInvariant().Trim()}:{limit}";
 
-        var cached = await _cache.GetAsync<List<OsmAttractionDto>>(cacheKey, ct);
+        var cached = await _cache.GetAsync<List<PoiDto>>(cacheKey, ct);
         if (cached != null)
         {
             _logger.LogInformation("Cache hit for POIs '{City}' (limit={Limit}).", cityName, limit);
@@ -122,7 +122,7 @@ public class OsmService : IPoiService
         if (coordsResult.IsFailure)
         {
             _logger.LogError("Failed to resolve coordinates for {City}.", cityName);
-            return Result.Failure<List<OsmAttractionDto>>(coordsResult.Error);
+            return Result.Failure<List<PoiDto>>(coordsResult.Error);
         }
  
         var coords = coordsResult.Value;
@@ -181,12 +181,12 @@ public class OsmService : IPoiService
         }
  
         _logger.LogError("All Overpass endpoints failed for {City}.", cityName);
-        return Result.Failure<List<OsmAttractionDto>>(Error.External("GetTopAttractions.External", "Failed to fetch pois from Overpass API"));
+        return Result.Failure<List<PoiDto>>(Error.External("GetTopAttractions.External", "Failed to fetch pois from Overpass API"));
     }
 
-    private List<OsmAttractionDto> ParseOverpassResponse(string json, int limit, string cityName)
+    private List<PoiDto> ParseOverpassResponse(string json, int limit, string cityName)
     {
-        var attractions = new List<OsmAttractionDto>();
+        var attractions = new List<PoiDto>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         using var doc = JsonDocument.Parse(json);
@@ -264,7 +264,7 @@ public class OsmService : IPoiService
 
             var googleMapsLink = $"https://www.google.com/maps/search/?api=1&query={lat.ToString(System.Globalization.CultureInfo.InvariantCulture)},{lon.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
 
-            attractions.Add(new OsmAttractionDto
+            attractions.Add(new PoiDto
             {
                 Name = name,
                 City = cityName,
@@ -280,11 +280,11 @@ public class OsmService : IPoiService
         return attractions.OrderByDescending(a => a.Score).Take(limit).ToList();
     }
 
-    public async Task<Result<List<OsmAttractionDto>>> GetTopDiningAsync(string cityName, int limit = 40, CancellationToken ct = default)
+    public async Task<Result<List<PoiDto>>> GetTopDiningAsync(string cityName, int limit = 40, CancellationToken ct = default)
     {
         var cacheKey = $"dining:{cityName.ToLowerInvariant().Trim()}:{limit}";
 
-        var cached = await _cache.GetAsync<List<OsmAttractionDto>>(cacheKey, ct);
+        var cached = await _cache.GetAsync<List<PoiDto>>(cacheKey, ct);
         if (cached != null)
         {
             _logger.LogInformation("Cache hit for dining '{City}' (limit={Limit}).", cityName, limit);
@@ -295,7 +295,7 @@ public class OsmService : IPoiService
         if (coordsResult.IsFailure)
         {
             _logger.LogError("Failed to resolve coordinates for {City} for dining.", cityName);
-            return Result.Failure<List<OsmAttractionDto>>(coordsResult.Error);
+            return Result.Failure<List<PoiDto>>(coordsResult.Error);
         }
  
         var coords = coordsResult.Value;
@@ -353,12 +353,12 @@ public class OsmService : IPoiService
         }
  
         _logger.LogError("All Overpass endpoints failed for dining in {City}.", cityName);
-        return Result.Failure<List<OsmAttractionDto>>(Error.External("GetTopDining.External", "Failed to fetch dining from Overpass API"));
+        return Result.Failure<List<PoiDto>>(Error.External("GetTopDining.External", "Failed to fetch dining from Overpass API"));
     }
 
-    private List<OsmAttractionDto> ParseOverpassDiningResponse(string json, int limit, string cityName)
+    private List<PoiDto> ParseOverpassDiningResponse(string json, int limit, string cityName)
     {
-        var dining = new List<OsmAttractionDto>();
+        var dining = new List<PoiDto>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         using var doc = JsonDocument.Parse(json);
@@ -432,7 +432,7 @@ public class OsmService : IPoiService
 
             var googleMapsLink = $"https://www.google.com/maps/search/?api=1&query={lat.ToString(System.Globalization.CultureInfo.InvariantCulture)},{lon.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
 
-            dining.Add(new OsmAttractionDto
+            dining.Add(new PoiDto
             {
                 Name = name,
                 City = cityName,

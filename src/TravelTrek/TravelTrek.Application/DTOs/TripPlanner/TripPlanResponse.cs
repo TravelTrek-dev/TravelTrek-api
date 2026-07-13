@@ -5,7 +5,7 @@ namespace TravelTrek.Application.DTOs.TripPlanner;
 /// <summary>
 /// The complete trip itinerary returned to the client.
 /// </summary>
-public class TripPlanResponse
+public record TripPlanResponse
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public Guid? Id { get; set; }
@@ -29,7 +29,7 @@ public class TripPlanResponse
 /// <summary>
 /// Weather summary for the trip period.
 /// </summary>
-public class WeatherSummaryDto
+public record WeatherSummaryDto
 {
     public double AvgTempCelsius { get; set; }
     public string Condition { get; set; } = string.Empty;
@@ -40,14 +40,14 @@ public class WeatherSummaryDto
 /// <summary>
 /// A single day in the itinerary.
 /// </summary>
-public class DayPlanDto
+public record DayPlanDto
 {
     public int DayNumber { get; set; }
     public List<ActivityDto> Activities { get; set; } = new();
     public MealPlanDto? Meals { get; set; }
 }
 
-public class MealPlanDto
+public record MealPlanDto
 {
     public string? Breakfast { get; set; }
     public string? Lunch { get; set; }
@@ -57,7 +57,7 @@ public class MealPlanDto
 /// <summary>
 /// A single activity / POI visit within a day.
 /// </summary>
-public class ActivityDto
+public record ActivityDto
 {
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;

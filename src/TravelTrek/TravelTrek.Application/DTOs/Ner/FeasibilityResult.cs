@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace TravelTrek.Application.DTOs.Ner;
 
-public class FeasibilityResult
+public record FeasibilityResult
 {
     [JsonPropertyName("verdict")]
     public string Verdict { get; set; } = string.Empty;

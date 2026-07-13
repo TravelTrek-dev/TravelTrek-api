@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace TravelTrek.Application.DTOs.Ner;
 
-public class NerEntity
+public record NerEntity
 {
     [JsonPropertyName("entity_group")]
     public string EntityGroup { get; set; } = string.Empty;

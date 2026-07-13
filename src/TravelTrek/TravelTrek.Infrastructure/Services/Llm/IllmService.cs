@@ -6,15 +6,15 @@ using TravelTrek.Application.Interfaces;
 using TravelTrek.Domain.Common;
 using TravelTrek.Infrastructure.Data.Configurations;
 
-namespace TravelTrek.Infrastructure.Services.Ollama;
+namespace TravelTrek.Infrastructure.Services.Llm;
 
-public class OpenAIService : ILLMService
+public class OpenAiService : ILLMService
 {
     private readonly HttpClient _httpClient;
     private readonly OpenAIApiOptions _options;
-    private readonly ILogger<OpenAIService> _logger;
+    private readonly ILogger<OpenAiService> _logger;
 
-    public OpenAIService(HttpClient httpClient, IOptions<OpenAIApiOptions> options, ILogger<OpenAIService> logger)
+    public OpenAiService(HttpClient httpClient, IOptions<OpenAIApiOptions> options, ILogger<OpenAiService> logger)
     {
         _httpClient = httpClient;
         _options = options.Value;

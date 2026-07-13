@@ -1,6 +1,6 @@
 namespace TravelTrek.Application.DTOs.TripPlanner;
 
-public class SaveTripPlanRequest
+public record SaveTripPlanRequest
 {
     public string Prompt { get; set; } = string.Empty;
     

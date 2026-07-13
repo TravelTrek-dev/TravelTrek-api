@@ -1,6 +1,6 @@
 namespace TravelTrek.Application.DTOs.Osm;
 
-public class OsmAttractionDto
+public record PoiDto
 {
     public string Name { get; set; } = string.Empty;
     public string City { get; set; } = string.Empty;

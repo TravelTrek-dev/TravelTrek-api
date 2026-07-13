@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Net.Mail;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -26,6 +25,8 @@ using TravelTrek.Infrastructure.Services.Poi;
 using TravelTrek.Infrastructure.Services.Llm;
 using TravelTrek.Infrastructure.Services.Cache;
 using TravelTrek.Application.Services;
+using TravelTrek.Application.Services.TripGeneration;
+using TravelTrek.Infrastructure.Services.Currency;
 
 namespace TravelTrek.Infrastructure
 {
@@ -177,7 +178,6 @@ namespace TravelTrek.Infrastructure
 
             #region POI Services (Google Places → OSM → LLM fallback)
 
-            // Google Places (primary)
             services.AddOptionsWithValidateOnStart<GooglePlacesOptions>()
                 .Bind(configuration.GetSection(GooglePlacesOptions.SectionName))
                 .ValidateDataAnnotations();
@@ -225,11 +225,12 @@ namespace TravelTrek.Infrastructure
 
             #endregion
 
+
+            services.AddScoped<ICurrencyService, CurrencyService>();
             #region Trip Plan Services
 
             services.AddScoped<ITripGenerationService, TripGenerationService>();
             services.AddScoped<ITripPlanCrudService, TripPlanCrudService>();
-            services.AddScoped<ITripSharingService, TripSharingService>();
             services.AddScoped<ITripExpenseService, TripExpenseService>();
 
             #endregion

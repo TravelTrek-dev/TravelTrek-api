@@ -1,6 +1,6 @@
 namespace TravelTrek.Application.DTOs.TripPlanner;
 
-public class RefinePlanRequest
+public record RefinePlanRequest
 {
     public string UserPrompt { get; set; }
 }

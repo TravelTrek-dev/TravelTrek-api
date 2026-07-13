@@ -1,6 +1,6 @@
 namespace TravelTrek.Application.DTOs.Ner;
 
-public class ExtractedTripData
+public record ExtractedTripData
 {
     public List<string> Locations { get; set; } = [];
     public List<string> Dates { get; set; } = [];

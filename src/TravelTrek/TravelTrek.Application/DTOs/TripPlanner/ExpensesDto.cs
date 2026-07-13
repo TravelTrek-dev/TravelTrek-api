@@ -1,6 +1,6 @@
 namespace TravelTrek.Application.DTOs.TripPlanner;
 
-public class ExpensesDto
+public record ExpensesDto
 {
     public string City { get; set; }
     public List<ExpenseDto> Expenses { get; set; }
